@@ -1,0 +1,51 @@
+# FastAPI and Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+websockets==12.0
+python-multipart==0.0.6
+
+# Configuration
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# AI Services
+groq==0.4.1  # FREE - For LLM and Whisper
+openai==1.10.0  # For Vision and TTS
+
+# Local LLM (Optional)
+ollama==0.1.6  # FREE - Local models
+
+# Speech Processing
+pyaudio==0.2.14
+sounddevice==0.4.6
+soundfile==0.12.1
+numpy==1.26.3
+
+# Vision
+pillow==10.2.0
+opencv-python==4.9.0.80
+
+# RAG and Vector Store
+langchain==0.1.6
+langchain-community==0.0.20
+langchain-openai==0.0.5
+chromadb==0.4.22
+faiss-cpu==1.7.4
+
+# Tools and Utilities
+httpx==0.26.0
+aiohttp==3.9.3
+requests==2.31.0
+beautifulsoup4==4.12.3
+python-dateutil==2.8.2
+
+# Data Processing
+pandas==2.2.0
+
+# Logging
+loguru==0.7.2
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4
