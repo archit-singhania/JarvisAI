@@ -29,3 +29,5 @@ backend/.env
 # IDE
 .vscode/
 .idea/
+
+/Users/architsinghania/Documents/JarvisAI/backend/.env
