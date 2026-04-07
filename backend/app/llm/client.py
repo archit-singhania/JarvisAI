@@ -1,8 +1,9 @@
 """
-LLM Client supporting multiple FREE providers
+LLM Client — multi-provider with streaming.
+Groq model updated: llama-3.1-70b-versatile → llama-3.3-70b-versatile
 """
 import logging
-from typing import List, Dict, Optional, Any
+from typing import AsyncGenerator, Dict, List, Optional, Any
 from groq import Groq
 import google.generativeai as genai
 
@@ -10,225 +11,177 @@ from app.config import settings
 
 logger = logging.getLogger("jarvis.llm")
 
+_JARVIS_SYSTEM = """You are Jarvis, Tony Stark's AI assistant — brilliant, witty, and efficient.
+You have a dry sense of humour but never waste words.
+Keep answers concise and conversational unless depth is genuinely needed.
+When rapping or singing, be creative and rhythmic.
+When telling jokes, be sharp and punchy.
+Never say you're an AI unless directly asked."""
+
 
 class LLMClient:
-    """Multi-provider LLM client supporting FREE services"""
-    
+
     def __init__(self):
         self.provider = settings.LLM_PROVIDER
         self._groq_client = None
         self._gemini_model = None
-        
-        logger.info(f"LLM Client initialized with provider: {self.provider}")
-    
+        logger.info(f"LLMClient ready — provider: {self.provider}, model: {settings.LLM_MODEL}")
+
     @property
     def groq_client(self):
-        """Lazy load Groq client"""
         if self._groq_client is None:
             if not settings.GROQ_API_KEY:
-                raise ValueError("GROQ_API_KEY not set in environment")
+                raise ValueError("GROQ_API_KEY not set in .env")
             self._groq_client = Groq(api_key=settings.GROQ_API_KEY)
-            logger.info("Groq client initialized")
         return self._groq_client
-    
+
     @property
     def gemini_model(self):
-        """Lazy load Gemini model"""
         if self._gemini_model is None:
             if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY not set in environment")
+                raise ValueError("GEMINI_API_KEY not set")
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            self._gemini_model = genai.GenerativeModel(settings.LLM_MODEL or 'gemini-1.5-flash')
-            logger.info("Gemini model initialized")
+            self._gemini_model = genai.GenerativeModel(settings.LLM_MODEL or "gemini-1.5-flash")
         return self._gemini_model
-    
+
+    # ── Build messages ─────────────────────────────────────────────
+
+    def _build_messages(
+        self,
+        messages: List[Dict],
+        rag_context: Optional[Dict] = None,
+        tool_results: Optional[Dict] = None,
+        system_override: Optional[str] = None,
+    ) -> List[Dict]:
+        system = system_override or _JARVIS_SYSTEM
+
+        if rag_context and rag_context.get("documents"):
+            ctx = "\n\n".join(d["content"] for d in rag_context["documents"][:3])
+            system += f"\n\nRelevant context from memory:\n{ctx}"
+
+        if tool_results:
+            system += f"\n\nTool result: {tool_results}"
+
+        built = [{"role": "system", "content": system}]
+        for m in messages:
+            if m.get("role") in ("user", "assistant"):
+                built.append({"role": m["role"], "content": m["content"]})
+        return built
+
+    # ── Full response ──────────────────────────────────────────────
+
     async def generate_response(
         self,
-        messages: List[Dict[str, str]],
-        rag_context: Optional[Dict[str, Any]] = None,
-        tool_results: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None
+        messages: List[Dict],
+        rag_context: Optional[Dict] = None,
+        tool_results: Optional[Dict] = None,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Generate response using configured LLM provider
-        
-        Args:
-            messages: Conversation history
-            rag_context: Context from RAG system
-            tool_results: Results from tool execution
-            system_prompt: Optional system prompt override
-            
-        Returns:
-            Response dictionary with content and metadata
-        """
+        built = self._build_messages(messages, rag_context, tool_results, system_prompt)
         try:
-            # Build enhanced prompt with context
-            enhanced_messages = self._build_enhanced_messages(
-                messages, rag_context, tool_results, system_prompt
-            )
-            
-            # Route to appropriate provider
             if self.provider == "groq":
-                return await self._generate_groq(enhanced_messages)
+                return await self._groq_full(built)
             elif self.provider == "gemini":
-                return await self._generate_gemini(enhanced_messages)
+                return await self._gemini_full(built)
             elif self.provider == "ollama":
-                return await self._generate_ollama(enhanced_messages)
+                return await self._ollama_full(built)
             else:
-                raise ValueError(f"Unsupported provider: {self.provider}")
-                
+                raise ValueError(f"Unknown provider: {self.provider}")
         except Exception as e:
-            logger.error(f"Error generating response: {e}", exc_info=True)
-            return {
-                "content": "I apologize, but I encountered an error processing your request.",
-                "error": str(e),
-                "model": self.provider
-            }
-    
-    def _build_enhanced_messages(
-        self,
-        messages: List[Dict[str, str]],
-        rag_context: Optional[Dict[str, Any]],
-        tool_results: Optional[Dict[str, Any]],
-        system_prompt: Optional[str]
-    ) -> List[Dict[str, str]]:
-        """Build enhanced message list with context"""
-        
-        # Default system prompt
-        default_system = """You are Jarvis, an advanced AI assistant inspired by Tony Stark's AI.
-You are helpful, intelligent, and have a touch of wit. You can:
-- Answer questions accurately
-- Help with tasks and provide guidance
-- Use tools when needed
-- Analyze images and documents
-- Have natural conversations
+            logger.error(f"LLM error: {e}", exc_info=True)
+            return {"content": "I ran into an issue — please try again.", "error": str(e)}
 
-Be concise but thorough. Show personality but stay professional."""
-        
-        system_message = system_prompt or default_system
-        
-        # Add RAG context if available
-        if rag_context and rag_context.get("documents"):
-            context_text = "\n\n".join([
-                doc.get("content", "") for doc in rag_context["documents"][:3]
-            ])
-            system_message += f"\n\nRelevant context:\n{context_text}"
-        
-        # Add tool results if available
-        if tool_results:
-            system_message += f"\n\nTool results:\n{tool_results}"
-        
-        # Build message list
-        enhanced = [{"role": "system", "content": system_message}]
-        
-        # Add conversation history (convert to simple format)
-        for msg in messages:
-            if msg.get("role") in ["user", "assistant"]:
-                enhanced.append({
-                    "role": msg["role"],
-                    "content": msg["content"]
-                })
-        
-        return enhanced
-    
-    async def _generate_groq(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Generate response using Groq (FREE & Fast)"""
-        try:
-            logger.info(f"Generating response with Groq: {settings.LLM_MODEL}")
-            
-            response = self.groq_client.chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
-                temperature=settings.TEMPERATURE,
-                max_tokens=settings.MAX_TOKENS,
-                stream=False
-            )
-            
-            return {
-                "content": response.choices[0].message.content,
-                "model": settings.LLM_MODEL,
-                "tokens": {
-                    "prompt": response.usage.prompt_tokens,
-                    "completion": response.usage.completion_tokens,
-                    "total": response.usage.total_tokens
-                },
-                "provider": "groq"
-            }
-            
-        except Exception as e:
-            logger.error(f"Groq API error: {e}")
-            raise
-    
-    async def _generate_gemini(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Generate response using Gemini (FREE)"""
-        try:
-            logger.info(f"Generating response with Gemini: {settings.LLM_MODEL}")
-            
-            # Convert messages to Gemini format
-            history = []
-            prompt = ""
-            
-            for msg in messages:
-                if msg["role"] == "system":
-                    # Prepend system message to first user message
-                    prompt = msg["content"] + "\n\n"
-                elif msg["role"] == "user":
-                    if history:
-                        history.append({"role": "user", "parts": [msg["content"]]})
-                    else:
-                        prompt += msg["content"]
-                elif msg["role"] == "assistant":
-                    history.append({"role": "model", "parts": [msg["content"]]})
-            
-            # Start chat with history
-            chat = self.gemini_model.start_chat(history=history[:-1] if history else [])
-            
-            # Generate response
-            response = chat.send_message(
-                prompt if not history else messages[-1]["content"],
-                generation_config={
-                    "temperature": settings.TEMPERATURE,
-                    "max_output_tokens": settings.MAX_TOKENS,
-                }
-            )
-            
-            return {
-                "content": response.text,
-                "model": settings.LLM_MODEL,
-                "provider": "gemini"
-            }
-            
-        except Exception as e:
-            logger.error(f"Gemini API error: {e}")
-            raise
-    
-    async def _generate_ollama(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Generate response using Ollama (FREE Local)"""
-        try:
-            import ollama
-            
-            logger.info(f"Generating response with Ollama: {settings.OLLAMA_MODEL}")
-            
-            response = ollama.chat(
-                model=settings.OLLAMA_MODEL,
-                messages=messages
-            )
-            
-            return {
-                "content": response['message']['content'],
-                "model": settings.OLLAMA_MODEL,
-                "provider": "ollama"
-            }
-            
-        except Exception as e:
-            logger.error(f"Ollama error: {e}")
-            raise
-    
+    async def _groq_full(self, messages: List[Dict]) -> Dict:
+        resp = self.groq_client.chat.completions.create(
+            model=settings.LLM_MODEL,   # llama-3.3-70b-versatile
+            messages=messages,
+            temperature=settings.TEMPERATURE,
+            max_tokens=settings.MAX_TOKENS,
+            stream=False,
+        )
+        return {
+            "content": resp.choices[0].message.content,
+            "model": settings.LLM_MODEL,
+            "provider": "groq",
+            "tokens": {
+                "prompt": resp.usage.prompt_tokens,
+                "completion": resp.usage.completion_tokens,
+            },
+        }
+
+    async def _gemini_full(self, messages: List[Dict]) -> Dict:
+        history, prompt = [], ""
+        for m in messages:
+            if m["role"] == "system":
+                prompt = m["content"] + "\n\n"
+            elif m["role"] == "user":
+                history.append({"role": "user", "parts": [m["content"]]})
+            elif m["role"] == "assistant":
+                history.append({"role": "model", "parts": [m["content"]]})
+        chat = self.gemini_model.start_chat(history=history[:-1] if history else [])
+        resp = chat.send_message(
+            messages[-1]["content"],
+            generation_config={
+                "temperature": settings.TEMPERATURE,
+                "max_output_tokens": settings.MAX_TOKENS,
+            },
+        )
+        return {"content": resp.text, "model": settings.LLM_MODEL, "provider": "gemini"}
+
+    async def _ollama_full(self, messages: List[Dict]) -> Dict:
+        import ollama
+        resp = ollama.chat(model=settings.OLLAMA_MODEL, messages=messages)
+        return {
+            "content": resp["message"]["content"],
+            "model": settings.OLLAMA_MODEL,
+            "provider": "ollama",
+        }
+
+    # ── Streaming ──────────────────────────────────────────────────
+
     async def stream_response(
         self,
-        messages: List[Dict[str, str]],
-        rag_context: Optional[Dict[str, Any]] = None
-    ):
-        """Stream response for real-time output (for future WebSocket use)"""
-        # TODO: Implement streaming
-        pass
+        messages: List[Dict],
+        rag_context: Optional[Dict] = None,
+        tool_results: Optional[Dict] = None,
+        system_prompt: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        built = self._build_messages(messages, rag_context, tool_results, system_prompt)
+        try:
+            if self.provider == "groq":
+                async for chunk in self._groq_stream(built):
+                    yield chunk
+            elif self.provider == "ollama":
+                async for chunk in self._ollama_stream(built):
+                    yield chunk
+            else:
+                resp = await self.generate_response(
+                    messages, rag_context, tool_results, system_prompt
+                )
+                yield resp["content"]
+        except Exception as e:
+            logger.error(f"Stream error: {e}", exc_info=True)
+            yield "Sorry, I encountered an error while streaming."
+
+    async def _groq_stream(self, messages: List[Dict]) -> AsyncGenerator[str, None]:
+        stream = self.groq_client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            temperature=settings.TEMPERATURE,
+            max_tokens=settings.MAX_TOKENS,
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    async def _ollama_stream(self, messages: List[Dict]) -> AsyncGenerator[str, None]:
+        import ollama
+        stream = ollama.chat(
+            model=settings.OLLAMA_MODEL, messages=messages, stream=True
+        )
+        for chunk in stream:
+            content = chunk["message"]["content"]
+            if content:
+                yield content

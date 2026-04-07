@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>Assets\jarvis.ico</ApplicationIcon>
+    <AssemblyName>JarvisAI</AssemblyName>
+    <RootNamespace>JarvisAI</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WebSocket client -->
+    <PackageReference Include="Websocket.Client" Version="4.6.1" />
+    <!-- Audio recording from mic -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- JSON -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- MVVM -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <!-- Animations / fluent effects -->
+    <PackageReference Include="WPFAnimationFramework" Version="1.0.0" />
+  </ItemGroup>
+
+</Project>

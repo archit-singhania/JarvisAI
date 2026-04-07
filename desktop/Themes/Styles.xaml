@@ -1,0 +1,88 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ── Button ─────────────────────────────────────────────────── -->
+  <Style x:Key="JarvisButton" TargetType="Button">
+    <Setter Property="Background"   Value="{StaticResource BgCard}"/>
+    <Setter Property="Foreground"   Value="{StaticResource AccentCyan}"/>
+    <Setter Property="BorderBrush"  Value="{StaticResource AccentCyan}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding"      Value="16,8"/>
+    <Setter Property="FontSize"     Value="13"/>
+    <Setter Property="Cursor"       Value="Hand"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter Property="Background" Value="#00D4FF22"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter Property="Background" Value="#00D4FF44"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ── Mic button (circular) ──────────────────────────────────── -->
+  <Style x:Key="MicButton" TargetType="Button" BasedOn="{StaticResource JarvisButton}">
+    <Setter Property="Width"  Value="64"/>
+    <Setter Property="Height" Value="64"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Ellipse Fill="{TemplateBinding Background}"
+                   Stroke="{TemplateBinding BorderBrush}"
+                   StrokeThickness="2"
+                   Width="64" Height="64">
+          </Ellipse>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ── TextBox (input) ────────────────────────────────────────── -->
+  <Style x:Key="ChatInput" TargetType="TextBox">
+    <Setter Property="Background"        Value="{StaticResource BgCard}"/>
+    <Setter Property="Foreground"        Value="{StaticResource TextPrimary}"/>
+    <Setter Property="BorderBrush"       Value="#2A3A5C"/>
+    <Setter Property="BorderThickness"   Value="1"/>
+    <Setter Property="Padding"           Value="12,10"/>
+    <Setter Property="FontSize"          Value="14"/>
+    <Setter Property="CaretBrush"        Value="{StaticResource AccentCyan}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="8">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsFocused" Value="True">
+              <Setter Property="BorderBrush" Value="{StaticResource AccentCyan}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ── ScrollViewer (chat list) ───────────────────────────────── -->
+  <Style x:Key="ChatScrollViewer" TargetType="ScrollViewer">
+    <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+    <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+
+</ResourceDictionary>

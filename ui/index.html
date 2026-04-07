@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Jarvis AI</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--panel:#111827;--card:#1c2333;
+  --cyan:#00d4ff;--blue:#3b82f6;--green:#10b981;
+  --amber:#f59e0b;--red:#ef4444;--text:#f0f4ff;--muted:#8b9dc3;--border:#1c2a44;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Header ── */
+header{display:flex;align-items:center;gap:12px;padding:11px 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+.logo-dot{width:9px;height:9px;border-radius:50%;background:var(--cyan);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.logo-text{font-size:13px;font-weight:600;letter-spacing:3px;color:var(--cyan)}
+.voice-badge{font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid var(--border);color:var(--muted);margin-left:4px}
+.voice-badge.el{color:var(--amber);border-color:var(--amber)}
+.voice-badge.edge{color:var(--cyan);border-color:var(--cyan)}
+#conn-badge{margin-left:auto;font-size:11px;padding:3px 10px;border-radius:20px;border:1px solid var(--border);color:var(--muted)}
+#conn-badge.connected{color:var(--green);border-color:var(--green)}
+#conn-badge.error{color:var(--red);border-color:var(--red)}
+
+/* ── Layout ── */
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* ── Sidebar ── */
+aside{width:186px;background:var(--panel);border-right:1px solid var(--border);padding:12px 10px;display:flex;flex-direction:column;gap:5px;flex-shrink:0;overflow-y:auto}
+.sec{font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;padding:6px 0 3px}
+.sb{background:var(--card);border:1px solid var(--border);color:var(--cyan);padding:7px 10px;border-radius:7px;font-size:12px;cursor:pointer;text-align:left;transition:background .15s;width:100%}
+.sb:hover{background:#00d4ff18}
+
+/* ── Chat area ── */
+.chat{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* Waveform */
+#waveform{display:none;align-items:center;justify-content:center;gap:2px;height:46px;background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px}
+#waveform.active{display:flex}
+.bar{width:3px;background:var(--cyan);border-radius:2px;min-height:4px;transition:height .05s}
+
+/* Messages */
+#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
+#msgs::-webkit-scrollbar{width:4px}
+#msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.bubble{max-width:74%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.6;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+.bubble.user{align-self:flex-end;background:#1c3a6e;border-bottom-right-radius:3px}
+.bubble.jarvis{align-self:flex-start;background:#0e2a38;border-bottom-left-radius:3px;border-left:2px solid var(--cyan)}
+.bubble.system{align-self:center;background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:3px 12px;border-radius:20px}
+.bubble.reminder{align-self:center;background:#2a1800;border:1px solid var(--amber);color:var(--amber);font-size:12px}
+.bubble .sender{font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:1px;text-transform:uppercase}
+.bubble.jarvis .sender{color:var(--cyan)}
+.cursor::after{content:"▋";color:var(--cyan);animation:blink .7s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.playing-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-left:6px;vertical-align:middle;animation:blink 1s step-end infinite}
+
+/* ── Input bar ── */
+.input-bar{display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--panel);border-top:1px solid var(--border);flex-shrink:0}
+#txt{flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:10px;font-size:14px;outline:none;transition:border-color .15s}
+#txt:focus{border-color:var(--cyan)}
+#txt::placeholder{color:var(--muted)}
+.btn{background:var(--card);border:1px solid var(--border);color:var(--cyan);padding:10px 16px;border-radius:10px;font-size:13px;cursor:pointer;transition:background .15s;white-space:nowrap}
+.btn:hover{background:#00d4ff18}
+.btn.danger{color:var(--red);border-color:var(--red)}
+.btn.danger:hover{background:#ef444418}
+#mic-btn{font-size:18px;padding:10px 13px;position:relative}
+#mic-btn.active{background:var(--cyan);color:var(--bg);border-color:var(--cyan)}
+#mic-btn.active::after{content:'';position:absolute;inset:-3px;border-radius:13px;border:2px solid var(--cyan);animation:ripple 1s ease-out infinite;pointer-events:none}
+@keyframes ripple{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.4)}}
+#timer{font-size:11px;color:var(--red);min-width:34px;text-align:center;display:none}
+#timer.on{display:block}
+
+/* ── Voice toggle ── */
+#voice-toggle{background:var(--card);border:1px solid var(--border);color:var(--muted);padding:9px 12px;border-radius:10px;font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
+#voice-toggle.on{color:var(--green);border-color:var(--green);background:#10b98115}
+
+/* ── Tools panel ── */
+.tools-panel{width:196px;background:var(--panel);border-left:1px solid var(--border);padding:13px 10px;overflow-y:auto;flex-shrink:0}
+.tool-entry{background:var(--card);border:1px solid var(--border);border-radius:7px;padding:7px 9px;font-size:11px;color:var(--cyan);margin-bottom:5px;word-break:break-word;animation:fadeIn .2s}
+.tool-entry .tn{color:var(--amber);font-weight:600;margin-bottom:2px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-dot"></div>
+  <span class="logo-text">JARVIS AI</span>
+  <span id="voice-label" class="voice-badge">loading…</span>
+  <div id="conn-badge">● Connecting…</div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="sec">Quick tests</div>
+    <button class="sb" onclick="q('What time is it?')">🕐 Time</button>
+    <button class="sb" onclick="q('What is the weather?')">🌤 Weather</button>
+    <button class="sb" onclick="q('Tell me a joke')">😄 Joke</button>
+    <button class="sb" onclick="q('Rap for me about coding')">🎤 Rap</button>
+    <button class="sb" onclick="q('Sing a song about the moon')">🎵 Sing</button>
+    <button class="sb" onclick="q('Search for latest AI news')">🔍 Search</button>
+    <button class="sb" onclick="q('Open calculator')">💻 Open app</button>
+    <button class="sb" onclick="q('Remind me in 1 minute to stretch')">⏰ Reminder</button>
+    <div class="sec">Actions</div>
+    <button class="sb" onclick="stopAll()">⛔ Interrupt</button>
+    <button class="sb" onclick="clearChat()">🗑 Clear chat</button>
+    <div class="sec">Memory</div>
+    <button class="sb" onclick="addMem()">📥 Add fact</button>
+    <div class="sec">TTS Test</div>
+    <button class="sb" onclick="testVoice()">🔊 Test voice</button>
+  </aside>
+
+  <div class="chat">
+    <div id="waveform"></div>
+    <div id="msgs"></div>
+    <div class="input-bar">
+      <input id="txt" placeholder="Ask Jarvis anything… (Enter to send)"
+             onkeydown="if(event.key==='Enter')sendText()"/>
+      <span id="timer">0:00</span>
+      <button id="voice-toggle" onclick="toggleVoiceMode()" title="Toggle voice response">🔊 Voice off</button>
+      <button class="btn" id="mic-btn" onclick="toggleMic()">🎤</button>
+      <button class="btn" onclick="sendText()">Send</button>
+      <button class="btn danger" onclick="stopAll()">⛔</button>
+    </div>
+  </div>
+
+  <div class="tools-panel">
+    <div class="sec">Tool activity</div>
+    <div id="tool-log"></div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────
+let ws = null;
+let streamBubble = null, streamContent = '';
+let mediaRecorder = null, audioChunks = [], isRecording = false;
+let waveInt = null, timerInt = null, recSecs = 0;
+let voiceMode = true;   // speak responses aloud
+let audioQueue = [];    // ordered queue of audio chunks
+let isPlaying = false;  // semaphore — only one chunk plays at a time
+const BARS = 36;
+
+// ── Boot ──────────────────────────────────────────────────────────
+window.onload = () => {
+  connect();
+  updateVoiceBtn();
+  fetchVoiceLabel();
+};
+
+async function fetchVoiceLabel() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    const el = document.getElementById('voice-label');
+    if (d.tts === 'elevenlabs') {
+      el.textContent = 'ElevenLabs'; el.className = 'voice-badge el';
+    } else if (d.tts === 'edge') {
+      el.textContent = d.voice || 'edge-tts'; el.className = 'voice-badge edge';
+    } else {
+      el.textContent = d.tts || 'TTS'; el.className = 'voice-badge';
+    }
+  } catch(_) {}
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket('ws://localhost:8000/ws');
+  ws.onopen  = () => { badge('● Connected','connected'); sys('Jarvis online ✓'); };
+  ws.onclose = () => { badge('● Disconnected','error'); sys('Reconnecting…'); setTimeout(connect,3000); };
+  ws.onerror = () => badge('● Error','error');
+  ws.onmessage = e => handle(JSON.parse(e.data));
+}
+
+function handle(d) {
+  switch(d.type) {
+    // ── Streaming text ──
+    case 'stream_start':
+      streamContent = '';
+      streamBubble = addBubble('jarvis','',true);
+      break;
+    case 'stream_chunk':
+      streamContent += d.content;
+      if(streamBubble) streamBubble.querySelector('.body').textContent = streamContent;
+      scrollDown();
+      break;
+    case 'stream_end':
+      if(streamBubble) {
+        streamBubble.querySelector('.body').textContent = d.content || streamContent;
+        streamBubble.classList.remove('cursor');
+        streamBubble = null;
+      }
+      if(d.tool_used) logTool(d.tool_used, d.content);
+      scrollDown();
+      break;
+    case 'stream_interrupted':
+      if(streamBubble){ streamBubble.querySelector('.body').textContent += ' [stopped]'; streamBubble.classList.remove('cursor'); streamBubble=null; }
+      clearAudioQueue();
+      sys('Interrupted');
+      break;
+
+    // ── Audio chunks (sentence-by-sentence TTS) ──
+    case 'audio_chunk':
+      if(voiceMode && d.audio_b64) enqueueAudio(d.audio_b64, d.audio_format || 'mp3');
+      break;
+
+    // ── Voice pipeline events ──
+    case 'stt_start':
+      sys('Transcribing…');
+      break;
+    case 'transcript':
+      addBubble('user', d.content);
+      break;
+    case 'stt_error':
+      sys('Could not understand — try again');
+      break;
+    case 'audio_end':
+      if(d.content && !streamBubble) addBubble('jarvis', d.content);
+      if(d.tool_used) logTool(d.tool_used, d.content);
+      if(voiceMode && d.audio_b64) enqueueAudio(d.audio_b64, d.audio_format || 'mp3');
+      scrollDown();
+      break;
+
+    // ── Misc ──
+    case 'interrupted': clearAudioQueue(); sys('Stopped'); break;
+    case 'reminder':    addReminder(d.content); break;
+    case 'wake_detected': sys('🎙 ' + d.content); break;
+    case 'cleared':
+      document.getElementById('msgs').innerHTML = '';
+      document.getElementById('tool-log').innerHTML = '';
+      sys('Cleared');
+      break;
+  }
+}
+
+// ── Audio queue — plays chunks in order, no overlap ───────────────
+function enqueueAudio(b64, fmt) {
+  audioQueue.push({b64, fmt});
+  if(!isPlaying) playNextAudio();
+}
+
+function playNextAudio() {
+  if(!audioQueue.length){ isPlaying = false; return; }
+  isPlaying = true;
+  const {b64, fmt} = audioQueue.shift();
+  const mime = fmt === 'wav' ? 'audio/wav' : 'audio/mpeg';
+  try {
+    const bytes = atob(b64);
+    const arr   = new Uint8Array(bytes.length);
+    for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
+    const url   = URL.createObjectURL(new Blob([arr],{type:mime}));
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); playNextAudio(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); playNextAudio(); };
+    audio.play().catch(() => playNextAudio());
+  } catch(_) { playNextAudio(); }
+}
+
+function clearAudioQueue() {
+  audioQueue = [];
+  isPlaying  = false;
+}
+
+// ── Send text ─────────────────────────────────────────────────────
+function sendText() {
+  const inp = document.getElementById('txt');
+  const t   = inp.value.trim();
+  if(!t || !ws || ws.readyState !== WebSocket.OPEN) return;
+  addBubble('user', t);
+  ws.send(JSON.stringify({ type:'text', content:t, tts: voiceMode }));
+  inp.value = '';
+}
+
+function q(t) { document.getElementById('txt').value=t; sendText(); }
+
+function stopAll() {
+  clearAudioQueue();
+  if(ws && ws.readyState===WebSocket.OPEN)
+    ws.send(JSON.stringify({type:'interrupt'}));
+}
+
+function clearChat() {
+  clearAudioQueue();
+  if(ws && ws.readyState===WebSocket.OPEN)
+    ws.send(JSON.stringify({type:'clear'}));
+}
+
+function addMem() {
+  const f = prompt('Enter a fact for Jarvis to remember:');
+  if(!f) return;
+  fetch('/api/rag/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:f,doc_id:'fact_'+Date.now(),metadata:{type:'user_fact'}})
+  }).then(()=>sys('Memory saved: '+f));
+}
+
+async function testVoice() {
+  sys('Testing voice…');
+  try {
+    const r = await fetch('/api/speech/synthesize',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:'Hello, I am Jarvis. How may I assist you today?'})
+    });
+    const buf = await r.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    enqueueAudio(b64, 'mp3');
+    sys('Voice test playing…');
+  } catch(e){ sys('Voice test error: '+e.message); }
+}
+
+// ── Voice mode toggle ─────────────────────────────────────────────
+function toggleVoiceMode() {
+  voiceMode = !voiceMode;
+  updateVoiceBtn();
+}
+
+function updateVoiceBtn() {
+  const btn = document.getElementById('voice-toggle');
+  if(voiceMode){ btn.textContent='🔊 Voice on'; btn.className='btn'; btn.style.color='var(--green)'; btn.style.borderColor='var(--green)'; }
+  else { btn.textContent='🔇 Voice off'; btn.className='btn'; btn.style.color='var(--muted)'; btn.style.borderColor='var(--border)'; }
+}
+
+// ── Mic recording ─────────────────────────────────────────────────
+async function toggleMic() {
+  isRecording ? stopRec() : await startRec();
+}
+
+async function startRec() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    audioChunks = [];
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    mediaRecorder = new MediaRecorder(stream, mime ? {mimeType:mime} : {});
+    mediaRecorder.ondataavailable = e => { if(e.data?.size>0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(audioChunks, {type: mediaRecorder.mimeType||'audio/webm'});
+      stream.getTracks().forEach(t=>t.stop());
+      if(blob.size < 1000){ sys('Recording too short'); return; }
+      sys(`Processing voice (${(blob.size/1024).toFixed(0)}KB)…`);
+      const b64 = await blobToB64(blob);
+      if(ws?.readyState===WebSocket.OPEN)
+        ws.send(JSON.stringify({type:'audio', audio_b64:b64}));
+    };
+    mediaRecorder.start(250);
+    isRecording = true;
+    document.getElementById('mic-btn').classList.add('active');
+    startWave(); startTimer();
+    sys('Recording… click 🎤 again to stop');
+  } catch(e) {
+    sys(e.name==='NotAllowedError' ? 'Mic access denied' : 'Mic error: '+e.message);
+  }
+}
+
+function stopRec() {
+  if(!mediaRecorder||!isRecording) return;
+  mediaRecorder.stop(); isRecording=false;
+  document.getElementById('mic-btn').classList.remove('active');
+  stopWave(); stopTimer();
+}
+
+function blobToB64(blob) {
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result.split(',')[1]);
+    r.onerror=rej;
+    r.readAsDataURL(blob);
+  });
+}
+
+// ── Waveform ──────────────────────────────────────────────────────
+function startWave() {
+  const wf=document.getElementById('waveform');
+  wf.innerHTML='';
+  for(let i=0;i<BARS;i++){const b=document.createElement('div');b.className='bar';wf.appendChild(b);}
+  wf.classList.add('active');
+  waveInt=setInterval(()=>wf.querySelectorAll('.bar').forEach(b=>b.style.height=(4+Math.random()*36)+'px'),60);
+}
+function stopWave(){ clearInterval(waveInt); document.getElementById('waveform').classList.remove('active'); }
+
+// ── Timer ─────────────────────────────────────────────────────────
+function startTimer() {
+  recSecs=0;
+  const el=document.getElementById('timer'); el.classList.add('on'); el.textContent='0:00';
+  timerInt=setInterval(()=>{
+    recSecs++;
+    const m=Math.floor(recSecs/60),s=recSecs%60;
+    el.textContent=`${m}:${s.toString().padStart(2,'0')}`;
+    if(recSecs>=60) stopRec();
+  },1000);
+}
+function stopTimer(){
+  clearInterval(timerInt);
+  const el=document.getElementById('timer'); el.classList.remove('on'); el.textContent='0:00';
+}
+
+// ── UI helpers ────────────────────────────────────────────────────
+function addBubble(role, content, streaming=false) {
+  const m=document.getElementById('msgs');
+  const d=document.createElement('div');
+  d.className='bubble '+role+(streaming?' cursor':'');
+  const s=document.createElement('div'); s.className='sender';
+  s.textContent = role==='user' ? 'You' : 'Jarvis';
+  const b=document.createElement('div'); b.className='body'; b.textContent=content;
+  d.appendChild(s); d.appendChild(b); m.appendChild(d);
+  scrollDown(); return d;
+}
+
+function sys(t) {
+  const m=document.getElementById('msgs');
+  const d=document.createElement('div'); d.className='bubble system'; d.textContent=t;
+  m.appendChild(d); scrollDown();
+}
+
+function addReminder(t) {
+  const m=document.getElementById('msgs');
+  const d=document.createElement('div'); d.className='bubble reminder';
+  d.innerHTML='<div class="sender">⏰ Reminder</div><div>'+t+'</div>';
+  m.appendChild(d); scrollDown();
+  if(Notification.permission==='granted') new Notification('Jarvis',{body:t});
+  if(voiceMode) fetch('/api/speech/synthesize',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})
+  }).then(r=>r.arrayBuffer()).then(buf=>{
+    const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));
+    enqueueAudio(b64,'mp3');
+  }).catch(()=>{});
+}
+
+function logTool(name, content) {
+  const log=document.getElementById('tool-log');
+  const d=document.createElement('div'); d.className='tool-entry';
+  const p=(content||'').substring(0,70)+(content&&content.length>70?'…':'');
+  d.innerHTML='<div class="tn">'+name+'</div>'+p;
+  log.insertBefore(d,log.firstChild);
+  if(log.children.length>10) log.removeChild(log.lastChild);
+}
+
+function badge(t,c){ const b=document.getElementById('conn-badge'); b.textContent=t; b.className=c; }
+function scrollDown(){ const m=document.getElementById('msgs'); m.scrollTop=m.scrollHeight; }
+
+// ── Notifications ─────────────────────────────────────────────────
+if('Notification' in window && Notification.permission==='default')
+  Notification.requestPermission();
+</script>
+</body>
+</html>

@@ -1,2 +1,31 @@
+# macOS
 .DS_Store
+
+# Python
 .venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# .NET / C#
+desktop/bin/
+desktop/obj/
+desktop/*.user
+desktop/.vs/
+
+# Data & models (large files)
+data/
+models/
+logs/
+*.db
+
+# Environment
+backend/.env
+
+# IDE
+.vscode/
+.idea/
