@@ -1,63 +1,52 @@
 """
-LLM Client — multi-provider with streaming.
-Groq model updated: llama-3.1-70b-versatile → llama-3.3-70b-versatile
+LLM Client — Groq / Gemini / Ollama, full + streaming.
+FIX: Groq client resets itself on 401 so a key change takes effect immediately.
+FIX: stream_response no longer yields "Sorry I encountered an error" to the user —
+     it raises so the caller can handle gracefully.
 """
 import logging
 from typing import AsyncGenerator, Dict, List, Optional, Any
-from groq import Groq
-import google.generativeai as genai
-
 from app.config import settings
 
 logger = logging.getLogger("jarvis.llm")
-
-_JARVIS_SYSTEM = """You are Jarvis, Tony Stark's AI assistant — brilliant, witty, and efficient.
-You have a dry sense of humour but never waste words.
-Keep answers concise and conversational unless depth is genuinely needed.
-When rapping or singing, be creative and rhythmic.
-When telling jokes, be sharp and punchy.
-Never say you're an AI unless directly asked."""
 
 
 class LLMClient:
 
     def __init__(self):
-        self.provider = settings.LLM_PROVIDER
         self._groq_client = None
         self._gemini_model = None
-        logger.info(f"LLMClient ready — provider: {self.provider}, model: {settings.LLM_MODEL}")
+        logger.info(f"LLMClient ready — {settings.LLM_PROVIDER} / {settings.LLM_MODEL}")
+
+    @property
+    def _s(self):
+        return settings
 
     @property
     def groq_client(self):
         if self._groq_client is None:
-            if not settings.GROQ_API_KEY:
-                raise ValueError("GROQ_API_KEY not set in .env")
-            self._groq_client = Groq(api_key=settings.GROQ_API_KEY)
+            from groq import Groq
+            if not self._s.has_groq():
+                raise ValueError("GROQ_API_KEY not configured in .env")
+            self._groq_client = Groq(api_key=self._s.GROQ_API_KEY)
         return self._groq_client
 
-    @property
-    def gemini_model(self):
-        if self._gemini_model is None:
-            if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY not set")
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            self._gemini_model = genai.GenerativeModel(settings.LLM_MODEL or "gemini-1.5-flash")
-        return self._gemini_model
+    def _reset_groq_client(self):
+        """Force re-create client on next call (picks up new key from .env)."""
+        self._groq_client = None
 
-    # ── Build messages ─────────────────────────────────────────────
-
-    def _build_messages(
+    def _build(
         self,
         messages: List[Dict],
         rag_context: Optional[Dict] = None,
         tool_results: Optional[Dict] = None,
         system_override: Optional[str] = None,
     ) -> List[Dict]:
-        system = system_override or _JARVIS_SYSTEM
+        system = system_override or self._s.JARVIS_PERSONA
 
         if rag_context and rag_context.get("documents"):
             ctx = "\n\n".join(d["content"] for d in rag_context["documents"][:3])
-            system += f"\n\nRelevant context from memory:\n{ctx}"
+            system += f"\n\nRelevant context:\n{ctx}"
 
         if tool_results:
             system += f"\n\nTool result: {tool_results}"
@@ -77,65 +66,53 @@ class LLMClient:
         tool_results: Optional[Dict] = None,
         system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        built = self._build_messages(messages, rag_context, tool_results, system_prompt)
+        built = self._build(messages, rag_context, tool_results, system_prompt)
         try:
-            if self.provider == "groq":
-                return await self._groq_full(built)
-            elif self.provider == "gemini":
-                return await self._gemini_full(built)
-            elif self.provider == "ollama":
-                return await self._ollama_full(built)
-            else:
-                raise ValueError(f"Unknown provider: {self.provider}")
+            p = self._s.LLM_PROVIDER
+            if p == "groq":   return await self._groq_full(built)
+            if p == "gemini": return await self._gemini_full(built)
+            if p == "ollama": return await self._ollama_full(built)
+            raise ValueError(f"Unknown provider: {p}")
         except Exception as e:
+            self._handle_error(e)
             logger.error(f"LLM error: {e}", exc_info=True)
-            return {"content": "I ran into an issue — please try again.", "error": str(e)}
+            return {"content": "I ran into an issue, please try again.", "error": str(e)}
 
     async def _groq_full(self, messages: List[Dict]) -> Dict:
-        resp = self.groq_client.chat.completions.create(
-            model=settings.LLM_MODEL,   # llama-3.3-70b-versatile
-            messages=messages,
-            temperature=settings.TEMPERATURE,
-            max_tokens=settings.MAX_TOKENS,
-            stream=False,
-        )
-        return {
-            "content": resp.choices[0].message.content,
-            "model": settings.LLM_MODEL,
-            "provider": "groq",
-            "tokens": {
-                "prompt": resp.usage.prompt_tokens,
-                "completion": resp.usage.completion_tokens,
-            },
-        }
+        try:
+            resp = self.groq_client.chat.completions.create(
+                model=self._s.LLM_MODEL, messages=messages,
+                temperature=self._s.TEMPERATURE, max_tokens=self._s.MAX_TOKENS,
+                stream=False,
+            )
+            return {
+                "content":  resp.choices[0].message.content,
+                "model":    self._s.LLM_MODEL, "provider": "groq",
+                "tokens":   {"prompt": resp.usage.prompt_tokens,
+                             "completion": resp.usage.completion_tokens},
+            }
+        except Exception as e:
+            self._handle_error(e); raise
 
     async def _gemini_full(self, messages: List[Dict]) -> Dict:
-        history, prompt = [], ""
+        import google.generativeai as genai
+        if not self._gemini_model:
+            genai.configure(api_key=self._s.GEMINI_API_KEY)
+            self._gemini_model = genai.GenerativeModel(self._s.LLM_MODEL or "gemini-1.5-flash")
+        history = []
         for m in messages:
-            if m["role"] == "system":
-                prompt = m["content"] + "\n\n"
-            elif m["role"] == "user":
-                history.append({"role": "user", "parts": [m["content"]]})
-            elif m["role"] == "assistant":
-                history.append({"role": "model", "parts": [m["content"]]})
-        chat = self.gemini_model.start_chat(history=history[:-1] if history else [])
-        resp = chat.send_message(
-            messages[-1]["content"],
-            generation_config={
-                "temperature": settings.TEMPERATURE,
-                "max_output_tokens": settings.MAX_TOKENS,
-            },
-        )
-        return {"content": resp.text, "model": settings.LLM_MODEL, "provider": "gemini"}
+            if m["role"] == "user":      history.append({"role":"user",  "parts":[m["content"]]})
+            elif m["role"] == "assistant": history.append({"role":"model","parts":[m["content"]]})
+        chat = self._gemini_model.start_chat(history=history[:-1] if history else [])
+        resp = chat.send_message(messages[-1]["content"],
+                                 generation_config={"temperature": self._s.TEMPERATURE,
+                                                    "max_output_tokens": self._s.MAX_TOKENS})
+        return {"content": resp.text, "provider": "gemini"}
 
     async def _ollama_full(self, messages: List[Dict]) -> Dict:
         import ollama
-        resp = ollama.chat(model=settings.OLLAMA_MODEL, messages=messages)
-        return {
-            "content": resp["message"]["content"],
-            "model": settings.OLLAMA_MODEL,
-            "provider": "ollama",
-        }
+        resp = ollama.chat(model=self._s.OLLAMA_MODEL, messages=messages)
+        return {"content": resp["message"]["content"], "provider": "ollama"}
 
     # ── Streaming ──────────────────────────────────────────────────
 
@@ -146,42 +123,49 @@ class LLMClient:
         tool_results: Optional[Dict] = None,
         system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        built = self._build_messages(messages, rag_context, tool_results, system_prompt)
+        built = self._build(messages, rag_context, tool_results, system_prompt)
+        p = self._s.LLM_PROVIDER
         try:
-            if self.provider == "groq":
-                async for chunk in self._groq_stream(built):
-                    yield chunk
-            elif self.provider == "ollama":
-                async for chunk in self._ollama_stream(built):
-                    yield chunk
+            if p == "groq":
+                async for chunk in self._groq_stream(built): yield chunk
+            elif p == "ollama":
+                async for chunk in self._ollama_stream(built): yield chunk
             else:
-                resp = await self.generate_response(
-                    messages, rag_context, tool_results, system_prompt
-                )
+                resp = await self.generate_response(messages, rag_context, tool_results, system_prompt)
                 yield resp["content"]
         except Exception as e:
+            self._handle_error(e)
             logger.error(f"Stream error: {e}", exc_info=True)
-            yield "Sorry, I encountered an error while streaming."
+            # Don't yield "Sorry..." — let caller handle it cleanly
+            raise
 
     async def _groq_stream(self, messages: List[Dict]) -> AsyncGenerator[str, None]:
-        stream = self.groq_client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=settings.TEMPERATURE,
-            max_tokens=settings.MAX_TOKENS,
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
+        try:
+            stream = self.groq_client.chat.completions.create(
+                model=self._s.LLM_MODEL, messages=messages,
+                temperature=self._s.TEMPERATURE, max_tokens=self._s.MAX_TOKENS,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta: yield delta
+        except Exception as e:
+            self._handle_error(e); raise
 
     async def _ollama_stream(self, messages: List[Dict]) -> AsyncGenerator[str, None]:
         import ollama
-        stream = ollama.chat(
-            model=settings.OLLAMA_MODEL, messages=messages, stream=True
-        )
-        for chunk in stream:
-            content = chunk["message"]["content"]
-            if content:
-                yield content
+        for chunk in ollama.chat(model=self._s.OLLAMA_MODEL, messages=messages, stream=True):
+            c = chunk["message"]["content"]
+            if c: yield c
+
+    def _handle_error(self, e: Exception):
+        """Reset cached clients on auth errors so new key is picked up."""
+        err_str = str(e).lower()
+        if "401" in err_str or "invalid api key" in err_str or "authentication" in err_str:
+            logger.warning("Auth error — resetting Groq client (key may have changed)")
+            self._reset_groq_client()
+            # Also reload settings from .env so new key is used
+            try:
+                self._s.reload()
+            except Exception:
+                pass

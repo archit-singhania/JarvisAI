@@ -1,6 +1,6 @@
 """
-Configuration management for Jarvis AI — Phase 4
-TTS stack: ElevenLabs (best) → edge-tts (free fallback) → gTTS (last resort)
+Jarvis AI — configuration v5
+All settings from .env — nothing hardcoded.
 """
 from pathlib import Path
 from typing import Optional
@@ -13,11 +13,11 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 class Settings(BaseSettings):
 
     # ── API Keys ────────────────────────────────────────────────────
-    GROQ_API_KEY:         Optional[str] = Field(None, env="GROQ_API_KEY")
-    OPENAI_API_KEY:       Optional[str] = Field(None, env="OPENAI_API_KEY")
-    GEMINI_API_KEY:       Optional[str] = Field(None, env="GEMINI_API_KEY")
-    ANTHROPIC_API_KEY:    Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
-    ELEVENLABS_API_KEY:   Optional[str] = Field(None, env="ELEVENLABS_API_KEY")
+    GROQ_API_KEY:       Optional[str] = Field(None, env="GROQ_API_KEY")
+    OPENAI_API_KEY:     Optional[str] = Field(None, env="OPENAI_API_KEY")
+    GEMINI_API_KEY:     Optional[str] = Field(None, env="GEMINI_API_KEY")
+    ANTHROPIC_API_KEY:  Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    ELEVENLABS_API_KEY: Optional[str] = Field(None, env="ELEVENLABS_API_KEY")
 
     # ── Server ──────────────────────────────────────────────────────
     HOST:  str  = Field("0.0.0.0", env="HOST")
@@ -25,8 +25,17 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(True,      env="DEBUG")
 
     # ── LLM ─────────────────────────────────────────────────────────
-    LLM_PROVIDER: str = Field("groq",                    env="LLM_PROVIDER")
-    LLM_MODEL:    str = Field("llama-3.3-70b-versatile", env="LLM_MODEL")
+    LLM_PROVIDER:  str   = Field("groq",                    env="LLM_PROVIDER")
+    LLM_MODEL:     str   = Field("llama-3.3-70b-versatile", env="LLM_MODEL")
+    TEMPERATURE:   float = Field(0.7,  env="TEMPERATURE")
+    MAX_TOKENS:    int   = Field(2048, env="MAX_TOKENS")
+    JARVIS_PERSONA: str  = Field(
+        "You are Daisy, a warm intelligent coding assistant and personal AI. "
+        "You have a soft friendly female personality. You watch the developer's code "
+        "and speak up when you spot issues or have suggestions. "
+        "Keep responses concise and natural. Never say you are an AI unless asked.",
+        env="JARVIS_PERSONA"
+    )
 
     # ── Vision ──────────────────────────────────────────────────────
     VISION_PROVIDER: str = Field("ollama",      env="VISION_PROVIDER")
@@ -37,29 +46,22 @@ class Settings(BaseSettings):
     WHISPER_MODEL:       str = Field("whisper-large-v3", env="WHISPER_MODEL")
     LOCAL_WHISPER_MODEL: str = Field("base",             env="LOCAL_WHISPER_MODEL")
 
-    # ── TTS provider ────────────────────────────────────────────────
-    # "elevenlabs" → best quality, free 10k chars/month
-    # "edge"       → Microsoft Neural, free unlimited
-    # "coqui"      → offline, slower
-    # "gtts"       → last resort
+    # ── TTS ─────────────────────────────────────────────────────────
     TTS_PROVIDER: str = Field("elevenlabs", env="TTS_PROVIDER")
-    TTS_MODEL:    str = Field("tts-1",      env="TTS_MODEL")
-    TTS_VOICE:    str = Field("alloy",      env="TTS_VOICE")
 
-    # ── ElevenLabs settings ─────────────────────────────────────────
-    # Free voices: Adam (pNInz6obpgDQGcFmaJgB), Antoni, Josh, Arnold
-    ELEVENLABS_VOICE_ID:      str   = Field("pNInz6obpgDQGcFmaJgB", env="ELEVENLABS_VOICE_ID")
+    # ── ElevenLabs — Rachel (soft warm female) ───────────────────────
+    ELEVENLABS_VOICE_ID:      str   = Field("21m00Tcm4TlvDq8ikWAM", env="ELEVENLABS_VOICE_ID")
     ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5",    env="ELEVENLABS_MODEL_ID")
-    ELEVENLABS_STABILITY:     float = Field(0.45,  env="ELEVENLABS_STABILITY")
-    ELEVENLABS_SIMILARITY:    float = Field(0.80,  env="ELEVENLABS_SIMILARITY")
-    ELEVENLABS_STYLE:         float = Field(0.35,  env="ELEVENLABS_STYLE")
+    ELEVENLABS_STABILITY:     float = Field(0.50,  env="ELEVENLABS_STABILITY")
+    ELEVENLABS_SIMILARITY:    float = Field(0.85,  env="ELEVENLABS_SIMILARITY")
+    ELEVENLABS_STYLE:         float = Field(0.20,  env="ELEVENLABS_STYLE")
     ELEVENLABS_SPEAKER_BOOST: bool  = Field(True,  env="ELEVENLABS_SPEAKER_BOOST")
 
-    # ── Edge TTS settings (free fallback) ───────────────────────────
-    EDGE_TTS_VOICE:  str = Field("en-GB-RyanNeural", env="EDGE_TTS_VOICE")
+    # ── Edge TTS female fallback ─────────────────────────────────────
+    EDGE_TTS_VOICE:  str = Field("en-US-JennyNeural", env="EDGE_TTS_VOICE")
     EDGE_TTS_RATE:   str = Field("+0%",  env="EDGE_TTS_RATE")
     EDGE_TTS_VOLUME: str = Field("+0%",  env="EDGE_TTS_VOLUME")
-    EDGE_TTS_PITCH:  str = Field("-5Hz", env="EDGE_TTS_PITCH")
+    EDGE_TTS_PITCH:  str = Field("+0Hz", env="EDGE_TTS_PITCH")
 
     # ── Ollama ──────────────────────────────────────────────────────
     OLLAMA_HOST:         str = Field("http://localhost:11434", env="OLLAMA_HOST")
@@ -77,6 +79,11 @@ class Settings(BaseSettings):
     CHANNELS:    int = Field(1,     env="CHANNELS")
     CHUNK_SIZE:  int = Field(1024,  env="CHUNK_SIZE")
 
+    # ── Location ─────────────────────────────────────────────────────
+    LOCATION_LAT:  float = Field(28.6139, env="LOCATION_LAT")
+    LOCATION_LON:  float = Field(77.2090, env="LOCATION_LON")
+    LOCATION_NAME: str   = Field("Delhi", env="LOCATION_NAME")
+
     # ── RAG ─────────────────────────────────────────────────────────
     VECTOR_DB_PATH:  Path  = PROJECT_ROOT / "data" / "vectordb"
     CHUNK_SIZE_RAG:  int   = Field(1000,               env="CHUNK_SIZE_RAG")
@@ -84,17 +91,18 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str   = Field("all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
 
     # ── Wake word ────────────────────────────────────────────────────
-    WAKE_WORD:             str   = Field("jarvis", env="WAKE_WORD")
-    WAKE_WORD_ENABLED:     bool  = Field(True,     env="WAKE_WORD_ENABLED")
-    WAKE_WORD_SENSITIVITY: float = Field(0.5,      env="WAKE_WORD_SENSITIVITY")
+    WAKE_WORD:             str   = Field("jarvis",  env="WAKE_WORD")
+    WAKE_WORD_ENABLED:     bool  = Field(True,      env="WAKE_WORD_ENABLED")
+    WAKE_WORD_SENSITIVITY: float = Field(0.5,       env="WAKE_WORD_SENSITIVITY")
+
+    # ── Code watcher ─────────────────────────────────────────────────
+    CODE_WATCH_ENABLED:  bool = Field(True,          env="CODE_WATCH_ENABLED")
+    CODE_WATCH_PATH:     str  = Field("~/Documents", env="CODE_WATCH_PATH")
+    CODE_WATCH_INTERVAL: int  = Field(5,             env="CODE_WATCH_INTERVAL")
 
     # ── Streaming ───────────────────────────────────────────────────
-    STREAM_RESPONSES: bool = Field(True, env="STREAM_RESPONSES")
-
-    # ── Context ─────────────────────────────────────────────────────
-    MAX_CONTEXT_MESSAGES: int   = Field(10,   env="MAX_CONTEXT_MESSAGES")
-    MAX_TOKENS:           int   = Field(2048, env="MAX_TOKENS")
-    TEMPERATURE:          float = Field(0.7,  env="TEMPERATURE")
+    STREAM_RESPONSES:     bool = Field(True, env="STREAM_RESPONSES")
+    MAX_CONTEXT_MESSAGES: int  = Field(10,   env="MAX_CONTEXT_MESSAGES")
 
     class Config:
         env_file = ".env"
@@ -105,6 +113,33 @@ class Settings(BaseSettings):
         for p in [self.MODELS_DIR, self.DATA_DIR, self.LOGS_DIR,
                   self.VECTOR_DB_PATH, self.PIPER_MODEL_DIR]:
             p.mkdir(parents=True, exist_ok=True)
+
+    def has_elevenlabs(self) -> bool:
+        k = self.ELEVENLABS_API_KEY or ""
+        return bool(k and "your-" not in k and len(k) > 10)
+
+    def has_groq(self) -> bool:
+        k = self.GROQ_API_KEY or ""
+        return bool(k and "your-" not in k and len(k) > 10)
+
+    def reload(self):
+        from dotenv import dotenv_values
+        env_path = Path(__file__).parent.parent / ".env"
+        if not env_path.exists():
+            return
+        vals = dotenv_values(env_path)
+        for field_name in self.model_fields:
+            env_key = field_name.upper()
+            if env_key in vals:
+                try:
+                    ft = type(getattr(self, field_name))
+                    raw = vals[env_key]
+                    if ft == bool:    object.__setattr__(self, field_name, raw.lower() in ("true","1","yes"))
+                    elif ft == float: object.__setattr__(self, field_name, float(raw))
+                    elif ft == int:   object.__setattr__(self, field_name, int(raw))
+                    else:             object.__setattr__(self, field_name, raw)
+                except Exception:
+                    pass
 
 
 settings = Settings()
@@ -119,12 +154,10 @@ LOGGING_CONFIG = {
     "handlers": {
         "console": {"class": "logging.StreamHandler", "level": "INFO",
                     "formatter": "default", "stream": "ext://sys.stdout"},
-        "file": {
-            "class": "logging.handlers.RotatingFileHandler", "level": "DEBUG",
-            "formatter": "detailed",
-            "filename": str(settings.LOGS_DIR / "jarvis.log"),
-            "maxBytes": 10485760, "backupCount": 5,
-        },
+        "file": {"class": "logging.handlers.RotatingFileHandler", "level": "DEBUG",
+                 "formatter": "detailed",
+                 "filename": str(settings.LOGS_DIR / "jarvis.log"),
+                 "maxBytes": 10485760, "backupCount": 5},
     },
     "loggers": {
         "jarvis": {"level": "DEBUG", "handlers": ["console", "file"], "propagate": False},

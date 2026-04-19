@@ -1,14 +1,7 @@
 """
-Speech Processor — Phase 4 Final
-STT:  Groq Whisper (fast, free) → local Whisper fallback (offline)
-TTS:  ElevenLabs (best quality, free 10k/month)
-      → edge-tts (Microsoft Neural, free unlimited, very human)
-      → gTTS (last resort)
-
-Zero-delay architecture:
-  - TTS fires per sentence as LLM streams, not after full response
-  - All blocking calls run in thread executors (never blocks event loop)
-  - Audio format auto-detected so webm/wav/mp3 all work correctly
+Speech Processor — reads settings live on every call, no caching of voice IDs.
+This means changing ELEVENLABS_VOICE_ID in .env + calling /api/config/reload
+takes effect immediately without a server restart.
 """
 import asyncio
 import io
@@ -16,69 +9,73 @@ import logging
 import os
 import re
 import tempfile
-from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger("jarvis.speech")
 
 
 # ── Audio format detection ─────────────────────────────────────────
 
-def _detect_audio_format(audio_data: bytes) -> tuple[str, str]:
-    """Detect format from magic bytes → (extension, mime_type)."""
-    if audio_data[:4] == b'RIFF':
-        return ".wav", "audio/wav"
-    elif audio_data[:4] == b'fLaC':
-        return ".flac", "audio/flac"
-    elif audio_data[:3] == b'ID3' or audio_data[:2] == b'\xff\xfb':
-        return ".mp3", "audio/mpeg"
-    elif len(audio_data) > 8 and audio_data[4:8] == b'ftyp':
-        return ".m4a", "audio/mp4"
-    elif audio_data[:4] == b'OggS':
-        return ".ogg", "audio/ogg"
-    else:
-        return ".webm", "audio/webm"
+def _detect_audio_format(data: bytes) -> tuple[str, str]:
+    if data[:4] == b'RIFF':             return ".wav",  "audio/wav"
+    if data[:4] == b'fLaC':             return ".flac", "audio/flac"
+    if data[:3] == b'ID3' or data[:2] == b'\xff\xfb':
+                                         return ".mp3",  "audio/mpeg"
+    if len(data) > 8 and data[4:8] == b'ftyp':
+                                         return ".m4a",  "audio/mp4"
+    if data[:4] == b'OggS':             return ".ogg",  "audio/ogg"
+    return ".webm", "audio/webm"
 
 
 # ── Sentence splitter ─────────────────────────────────────────────
 
-_SENT_END = re.compile(r'(?<=[.!?])\s+|(?<=[.!?])$')
+_SENT_RE = re.compile(r'(?<=[.!?])\s+|(?<=[.!?])$')
 
 def split_sentences(text: str) -> list[str]:
-    parts = _SENT_END.split(text.strip())
+    parts = _SENT_RE.split(text.strip())
     out = []
     for p in parts:
         p = p.strip()
         if not p:
             continue
         if len(p) > 120:
-            for sub in re.split(r',\s+', p):
-                if sub.strip():
-                    out.append(sub.strip())
+            out.extend(s.strip() for s in re.split(r',\s+', p) if s.strip())
         else:
             out.append(p)
     return out or [text]
 
 
+# ── Text cleaner ──────────────────────────────────────────────────
+
+def clean_text(text: str) -> str:
+    t = re.sub(r'[—–]', '-', text)
+    t = re.sub(r'[\*\_\#\`]', '', t)
+    t = re.sub(r'\[.*?\]\(.*?\)', '', t)   # strip markdown links
+    t = re.sub(r'[^\x00-\x7F]+', ' ', t)
+    return re.sub(r'\s+', ' ', t).strip() or text
+
+
 class SpeechProcessor:
 
     def __init__(self):
-        from app.config import settings
-        self.settings = settings
         self._groq_client = None
         self._coqui_model = None
-        provider = settings.TTS_PROVIDER
-        has_el = bool(settings.ELEVENLABS_API_KEY and
-                      settings.ELEVENLABS_API_KEY != "your-elevenlabs-api-key-here")
-        if provider == "elevenlabs" and not has_el:
-            logger.warning("ElevenLabs key not set — falling back to edge-tts")
-        logger.info(f"SpeechProcessor ready | STT: groq_whisper | TTS: {provider}")
+        # NOTE: we do NOT cache settings fields here — always read from settings at call time
+        # so that /api/config/reload takes effect without restart
+        from app.config import settings as s
+        logger.info(f"SpeechProcessor ready | TTS: {s.TTS_PROVIDER} | "
+                    f"EL voice: {s.ELEVENLABS_VOICE_ID if s.has_elevenlabs() else 'not configured'}")
 
-    # ── Groq client ────────────────────────────────────────────────
+    @property
+    def _s(self):
+        """Always return the live settings object (never cache)."""
+        from app.config import settings
+        return settings
+
     @property
     def groq_client(self):
         if self._groq_client is None:
             from groq import Groq
-            self._groq_client = Groq(api_key=self.settings.GROQ_API_KEY)
+            self._groq_client = Groq(api_key=self._s.GROQ_API_KEY)
         return self._groq_client
 
     # ════════════════════════════════════════════════════════════════
@@ -90,10 +87,9 @@ class SpeechProcessor:
             return {"success": False, "text": "", "error": "Audio too short"}
 
         ext, mime = _detect_audio_format(audio_data)
-        logger.info(f"STT input: {mime}, {len(audio_data)/1024:.1f}KB")
+        logger.info(f"STT: {mime} {len(audio_data)/1024:.1f}KB")
 
-        api_key = self.settings.GROQ_API_KEY or ""
-        if api_key and "your-groq" not in api_key:
+        if self._s.has_groq():
             try:
                 return await self._transcribe_groq(audio_data, ext, mime, language)
             except Exception as e:
@@ -102,13 +98,12 @@ class SpeechProcessor:
         return await self._transcribe_local(audio_data, ext)
 
     async def _transcribe_groq(self, audio_data: bytes, ext: str, mime: str, language: str) -> dict:
-        """Groq Whisper — ~100-300ms, free, handles webm/wav/mp3/ogg."""
         loop = asyncio.get_event_loop()
         transcription = await loop.run_in_executor(
             None,
             lambda: self.groq_client.audio.transcriptions.create(
                 file=(f"audio{ext}", audio_data, mime),
-                model=self.settings.WHISPER_MODEL,
+                model=self._s.WHISPER_MODEL,
                 language=language,
                 response_format="text",
             )
@@ -119,16 +114,14 @@ class SpeechProcessor:
         return {"success": True, "text": text, "provider": "groq_whisper"}
 
     async def _transcribe_local(self, audio_data: bytes, ext: str = ".webm") -> dict:
-        """Local openai-whisper — fully offline."""
         try:
             import whisper
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(audio_data)
-                tmp_path = tmp.name
+                tmp.write(audio_data); tmp_path = tmp.name
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: whisper.load_model(self.settings.LOCAL_WHISPER_MODEL).transcribe(tmp_path)
+                lambda: whisper.load_model(self._s.LOCAL_WHISPER_MODEL).transcribe(tmp_path)
             )
             os.unlink(tmp_path)
             text = result["text"].strip()
@@ -139,67 +132,57 @@ class SpeechProcessor:
             return {"success": False, "text": "", "error": str(e)}
 
     # ════════════════════════════════════════════════════════════════
-    #  TTS — single shot
+    #  TTS — reads voice settings fresh every call
     # ════════════════════════════════════════════════════════════════
 
     async def synthesize(self, text: str, voice_speed: float = 1.0, emotion: str = "neutral") -> dict:
-        """Convert text → audio bytes using best available TTS."""
-        clean = _clean_text(text)
+        """
+        TTS priority: elevenlabs → edge → gtts
+        Reads ELEVENLABS_VOICE_ID and all settings fresh every call —
+        so changing voice in .env + /api/config/reload works immediately.
+        """
+        clean = clean_text(text)
         if not clean:
-            return {"success": False, "error": "Empty text after cleaning"}
+            return {"success": False, "error": "Empty text"}
 
-        provider = self.settings.TTS_PROVIDER
-        has_el = bool(self.settings.ELEVENLABS_API_KEY and
-                      self.settings.ELEVENLABS_API_KEY != "your-elevenlabs-api-key-here")
+        s = self._s  # live settings
 
-        # Try ElevenLabs first if configured
-        if provider == "elevenlabs" and has_el:
+        if s.TTS_PROVIDER == "elevenlabs" and s.has_elevenlabs():
             try:
-                return await self._synthesize_elevenlabs(clean)
+                return await self._elevenlabs(clean, s)
             except Exception as e:
                 logger.warning(f"ElevenLabs failed ({e}) — edge-tts fallback")
 
-        # edge-tts (free, neural, very human)
         try:
-            return await self._synthesize_edge(clean)
+            return await self._edge(clean, s)
         except Exception as e:
             logger.warning(f"edge-tts failed ({e}) — gTTS fallback")
 
-        # Last resort
-        return await self._synthesize_gtts(clean)
+        return await self._gtts(clean)
 
-    # ════════════════════════════════════════════════════════════════
-    #  TTS implementations
-    # ════════════════════════════════════════════════════════════════
+    # ── ElevenLabs ────────────────────────────────────────────────
 
-    async def _synthesize_elevenlabs(self, text: str) -> dict:
+    async def _elevenlabs(self, text: str, s) -> dict:
         """
-        ElevenLabs TTS — best quality, sounds exactly like a human.
-        Free tier: 10,000 characters/month.
-        Uses eleven_turbo_v2_5 model for lowest latency (~200ms first byte).
+        ElevenLabs TTS — best quality, free 10k chars/month.
+        Voice ID is read from s (live settings) every call.
         """
         import httpx
 
-        api_key  = self.settings.ELEVENLABS_API_KEY
-        voice_id = self.settings.ELEVENLABS_VOICE_ID
-        model_id = self.settings.ELEVENLABS_MODEL_ID
-
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{s.ELEVENLABS_VOICE_ID}"
         payload = {
             "text": text,
-            "model_id": model_id,
+            "model_id": s.ELEVENLABS_MODEL_ID,
             "voice_settings": {
-                "stability":         self.settings.ELEVENLABS_STABILITY,
-                "similarity_boost":  self.settings.ELEVENLABS_SIMILARITY,
-                "style":             self.settings.ELEVENLABS_STYLE,
-                "use_speaker_boost": self.settings.ELEVENLABS_SPEAKER_BOOST,
+                "stability":         s.ELEVENLABS_STABILITY,
+                "similarity_boost":  s.ELEVENLABS_SIMILARITY,
+                "style":             s.ELEVENLABS_STYLE,
+                "use_speaker_boost": s.ELEVENLABS_SPEAKER_BOOST,
             },
             "output_format": "mp3_44100_128",
         }
-
         headers = {
-            "xi-api-key":   api_key,
+            "xi-api-key":   s.ELEVENLABS_API_KEY,
             "Content-Type": "application/json",
             "Accept":       "audio/mpeg",
         }
@@ -210,76 +193,49 @@ class SpeechProcessor:
         if resp.status_code != 200:
             raise RuntimeError(f"ElevenLabs {resp.status_code}: {resp.text[:200]}")
 
-        audio_bytes = resp.content
-        logger.info(f"ElevenLabs TTS → {len(audio_bytes)/1024:.1f}KB for '{text[:50]}'")
-        return {"success": True, "audio_data": audio_bytes, "provider": "elevenlabs", "format": "mp3"}
+        logger.info(f"ElevenLabs ({s.ELEVENLABS_VOICE_ID}) → {len(resp.content)/1024:.1f}KB")
+        return {"success": True, "audio_data": resp.content, "provider": "elevenlabs", "format": "mp3"}
 
-    async def _synthesize_edge(self, text: str) -> dict:
-        """
-        edge-tts — Microsoft Neural TTS, completely free, no API key needed.
-        ~80-150ms latency. Sounds genuinely human.
-        Install: pip install edge-tts
-        """
+    # ── Edge TTS ──────────────────────────────────────────────────
+
+    async def _edge(self, text: str, s) -> dict:
         import edge_tts
-
         communicate = edge_tts.Communicate(
-            text,
-            self.settings.EDGE_TTS_VOICE,
-            rate=self.settings.EDGE_TTS_RATE,
-            volume=self.settings.EDGE_TTS_VOLUME,
-            pitch=self.settings.EDGE_TTS_PITCH,
+            text, s.EDGE_TTS_VOICE,
+            rate=s.EDGE_TTS_RATE, volume=s.EDGE_TTS_VOLUME, pitch=s.EDGE_TTS_PITCH,
         )
-
         buf = io.BytesIO()
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 buf.write(chunk["data"])
-
         buf.seek(0)
-        audio_bytes = buf.read()
-        if not audio_bytes:
-            raise RuntimeError("edge-tts returned empty audio")
+        audio = buf.read()
+        if not audio:
+            raise RuntimeError("edge-tts empty response")
+        logger.info(f"edge-tts ({s.EDGE_TTS_VOICE}) → {len(audio)/1024:.1f}KB")
+        return {"success": True, "audio_data": audio, "provider": "edge_tts", "format": "mp3"}
 
-        logger.info(f"edge-tts → {len(audio_bytes)/1024:.1f}KB for '{text[:50]}'")
-        return {"success": True, "audio_data": audio_bytes, "provider": "edge_tts", "format": "mp3"}
+    # ── Coqui ─────────────────────────────────────────────────────
 
-    async def _synthesize_coqui(self, text: str) -> dict:
-        """Coqui TTS — offline fallback, slower on CPU."""
+    async def _coqui(self, text: str) -> dict:
         from TTS.api import TTS
         if self._coqui_model is None:
-            logger.info("Loading Coqui TTS model…")
             self._coqui_model = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
-
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            out_path = tmp.name
-
+            out = tmp.name
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: self._coqui_model.tts_to_file(text=text, file_path=out_path)
-        )
-        with open(out_path, "rb") as f:
-            audio_bytes = f.read()
-        os.unlink(out_path)
-        return {"success": True, "audio_data": audio_bytes, "provider": "coqui", "format": "wav"}
+        await loop.run_in_executor(None, lambda: self._coqui_model.tts_to_file(text=text, file_path=out))
+        with open(out, "rb") as f:
+            audio = f.read()
+        os.unlink(out)
+        return {"success": True, "audio_data": audio, "provider": "coqui", "format": "wav"}
 
-    async def _synthesize_gtts(self, text: str) -> dict:
-        """gTTS — last resort, needs internet, free."""
+    # ── gTTS ──────────────────────────────────────────────────────
+
+    async def _gtts(self, text: str) -> dict:
         from gtts import gTTS
         tts = gTTS(text=text, lang="en", slow=False)
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
         return {"success": True, "audio_data": buf.read(), "provider": "gtts", "format": "mp3"}
-
-
-# ── Shared text cleaner ────────────────────────────────────────────
-
-def _clean_text(text: str) -> str:
-    """Strip characters that confuse TTS engines."""
-    t = re.sub(r'[—–]', '-', text)
-    t = re.sub(r'[\*\_\#\`]', '', t)
-    t = re.sub(r'\[.*?\]\(.*?\)', '', t)
-    t = re.sub(r'[^\x00-\x7F]+', ' ', t)
-    t = re.sub(r'\s+', ' ', t).strip()
-    return t or text
