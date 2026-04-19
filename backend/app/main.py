@@ -1,12 +1,11 @@
 """
-Jarvis AI — FastAPI main v5
+Daisy AI — FastAPI main v6
 Fixes:
-  - _on_wake uses loop.call_soon_threadsafe (thread-safe, no event loop error)
-  - LLM stream errors handled gracefully — no "Sorry I encountered an error"
-  - ConnectionManager stores loop and exposes broadcast_threadsafe
-  - tts=True by default for voice pipeline
-  - /api/code/context — receives code snapshots from editor extension
-  - /api/code/interrupt — AI proactively interrupts with coding advice
+  - Double response eliminated: audio_end no longer sent after stream_end
+  - TTS plays each sentence immediately as it streams (no batch wait at end)
+  - Groq STT uses whisper-large-v3-turbo (3x faster, same quality)
+  - Detailed persona via .env
+  - MAX_TOKENS reduced to 1024 for voice — shorter, faster responses
 """
 import asyncio
 import base64
@@ -33,7 +32,6 @@ _NO_RAG = {
     "time", "weather", "joke", "rap", "sing", "open", "launch",
     "search", "remind", "alarm", "calculate", "what time",
     "temperature", "forecast", "date", "timer", "screenshot", "volume", "mute",
-    "explain this", "what does this do", "review my code", "debug",
 }
 
 def _needs_rag(text: str) -> bool:
@@ -70,7 +68,6 @@ class ConnectionManager:
             self.active.remove(ws)
 
     def broadcast_threadsafe(self, data: dict):
-        """Schedule broadcast from any background thread."""
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self.broadcast(data), self._loop)
 
@@ -84,9 +81,8 @@ async def lifespan(app: FastAPI):
     manager.set_loop(loop)
 
     v = settings.ELEVENLABS_VOICE_ID if settings.has_elevenlabs() else settings.EDGE_TTS_VOICE
-    logger.info(f"🚀 Jarvis AI v5 | TTS:{settings.TTS_PROVIDER} ({v}) | LLM:{settings.LLM_MODEL}")
+    logger.info(f"🚀 Daisy AI v6 | TTS:{settings.TTS_PROVIDER} ({v}) | LLM:{settings.LLM_MODEL} | STT:{settings.WHISPER_MODEL}")
 
-    # Reminder scheduler
     from app.tools.scheduler import ReminderScheduler
     db_path = Path(settings.DATA_DIR) / "reminders.db"
 
@@ -96,28 +92,22 @@ async def lifespan(app: FastAPI):
     orchestrator.scheduler = ReminderScheduler(db_path, _on_reminder)
     await orchestrator.scheduler.start()
 
-    # Code watcher
     from app.tools.code_watcher import CodeWatcher
     orchestrator.code_watcher = CodeWatcher(
-        on_interrupt=lambda msg: manager.broadcast_threadsafe({
-            "type": "code_interrupt", "content": msg
-        }),
+        on_interrupt=lambda msg: manager.broadcast_threadsafe({"type": "code_interrupt", "content": msg}),
         llm_client=orchestrator.llm_client,
         speech_processor=orchestrator.speech_processor,
         manager=manager,
     )
     orchestrator.code_watcher.start()
 
-    # Wake word — thread-safe
     if settings.WAKE_WORD_ENABLED:
         try:
             from app.speech.wake_word import WakeWordListener
 
             def _on_wake():
                 interrupt_handler.interrupt()
-                manager.broadcast_threadsafe({
-                    "type": "wake_detected", "content": "Listening…"
-                })
+                manager.broadcast_threadsafe({"type": "wake_detected", "content": "Listening…"})
 
             orchestrator.wake_listener = WakeWordListener(on_detected=_on_wake)
             orchestrator.wake_listener.start()
@@ -130,13 +120,11 @@ async def lifespan(app: FastAPI):
     logger.info("👋 Shutting down")
     for attr in ("wake_listener", "scheduler", "code_watcher"):
         if hasattr(orchestrator, attr):
-            try:
-                getattr(orchestrator, attr).stop()
-            except Exception:
-                pass
+            try: getattr(orchestrator, attr).stop()
+            except Exception: pass
 
 
-app = FastAPI(title="Jarvis AI", version="5.0.0", lifespan=lifespan)
+app = FastAPI(title="Daisy AI", version="6.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -145,22 +133,20 @@ _ui_path.mkdir(exist_ok=True)
 app.mount("/ui", StaticFiles(directory=str(_ui_path), html=True), name="ui")
 
 
-# ── Health ─────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"status": "online", "version": "5.0.0", "ui": "http://localhost:8000/ui"}
+    return {"status": "online", "version": "6.0.0", "ui": "http://localhost:8000/ui"}
 
 @app.get("/health")
 async def health():
     return {
         "llm": settings.LLM_MODEL, "tts": settings.TTS_PROVIDER,
-        "voice_id": settings.ELEVENLABS_VOICE_ID, "edge_voice": settings.EDGE_TTS_VOICE,
-        "elevenlabs_ok": settings.has_elevenlabs(), "groq_ok": settings.has_groq(),
-        "location": settings.LOCATION_NAME,
+        "stt": settings.WHISPER_MODEL,
+        "voice_id": settings.ELEVENLABS_VOICE_ID,
+        "elevenlabs_ok": settings.has_elevenlabs(),
+        "groq_ok": settings.has_groq(),
     }
 
-
-# ── Config ─────────────────────────────────────────────────────────
 @app.get("/api/config")
 async def get_config():
     return {
@@ -185,21 +171,20 @@ async def get_config():
 @app.patch("/api/config")
 async def patch_config(body: dict):
     allowed = {
-        "tts_provider", "elevenlabs_voice_id", "elevenlabs_model_id",
-        "elevenlabs_stability", "elevenlabs_similarity", "elevenlabs_style",
-        "elevenlabs_speaker_boost", "edge_tts_voice", "edge_tts_rate",
-        "edge_tts_volume", "edge_tts_pitch", "llm_model", "temperature",
-        "max_tokens", "location_name", "location_lat", "location_lon",
-        "jarvis_persona", "wake_word_enabled", "code_watch_enabled", "code_watch_path",
+        "tts_provider","elevenlabs_voice_id","elevenlabs_model_id",
+        "elevenlabs_stability","elevenlabs_similarity","elevenlabs_style",
+        "elevenlabs_speaker_boost","edge_tts_voice","edge_tts_rate",
+        "edge_tts_volume","edge_tts_pitch","llm_model","temperature",
+        "max_tokens","location_name","location_lat","location_lon",
+        "jarvis_persona","wake_word_enabled","code_watch_enabled","code_watch_path",
     }
     applied = {}
     for key, val in body.items():
-        if key.lower() not in allowed:
-            continue
+        if key.lower() not in allowed: continue
         attr = key.upper()
         try:
             cur = getattr(settings, attr, None)
-            if isinstance(cur, bool):   val = str(val).lower() in ("true","1","yes")
+            if isinstance(cur, bool):    val = str(val).lower() in ("true","1","yes")
             elif isinstance(cur, float): val = float(val)
             elif isinstance(cur, int):   val = int(val)
             object.__setattr__(settings, attr, val)
@@ -212,7 +197,7 @@ async def patch_config(body: dict):
 @app.post("/api/config/reload")
 async def reload_config():
     settings.reload()
-    return {"status": "reloaded", "tts_provider": settings.TTS_PROVIDER}
+    return {"status": "reloaded"}
 
 def _write_env(patch: dict):
     try:
@@ -236,8 +221,6 @@ def _write_env(patch: dict):
     except Exception as e:
         logger.warning(f"Could not write .env: {e}")
 
-
-# ── ElevenLabs ─────────────────────────────────────────────────────
 @app.get("/api/elevenlabs/voices")
 async def elevenlabs_voices():
     if not settings.has_elevenlabs():
@@ -258,8 +241,7 @@ async def elevenlabs_voices():
 
 @app.get("/api/elevenlabs/usage")
 async def elevenlabs_usage():
-    if not settings.has_elevenlabs():
-        return {"error": "Not configured"}
+    if not settings.has_elevenlabs(): return {"error": "Not configured"}
     import httpx
     try:
         async with httpx.AsyncClient(timeout=8.0) as c:
@@ -267,63 +249,33 @@ async def elevenlabs_usage():
                             headers={"xi-api-key": settings.ELEVENLABS_API_KEY})
         sub = r.json().get("subscription", {})
         used, lim = sub.get("character_count",0), sub.get("character_limit",10000)
-        return {"used": used, "limit": lim, "remaining": lim-used, "tier": sub.get("tier","free")}
+        return {"used": used, "limit": lim, "remaining": lim-used}
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/api/edge/voices")
-async def edge_voices():
-    try:
-        import edge_tts
-        all_v = await edge_tts.list_voices()
-        en = [{"name": v["ShortName"], "gender": v["Gender"],
-               "locale": v["Locale"], "friendly": v["FriendlyName"]}
-              for v in all_v if v["Locale"].startswith("en")]
-        return {"voices": sorted(en, key=lambda x: x["locale"]), "current": settings.EDGE_TTS_VOICE}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ── Code watcher API ───────────────────────────────────────────────
 @app.post("/api/code/context")
 async def receive_code_context(body: dict):
-    """
-    Receives code snapshots from editor extensions or the file watcher.
-    Body: { file: str, language: str, content: str, cursor_line: int }
-    """
     if hasattr(orchestrator, "code_watcher"):
         await orchestrator.code_watcher.update_context(body)
     return {"status": "received"}
 
 @app.post("/api/code/analyze")
 async def analyze_code(body: dict):
-    """Manually trigger a code analysis and get spoken + text feedback."""
-    code    = body.get("code", "")
-    lang    = body.get("language", "python")
-    question = body.get("question", "Review this code and point out any issues or improvements.")
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "code required"})
-
-    prompt = (
-        f"You are reviewing {lang} code. The developer is asking: '{question}'\n\n"
-        f"```{lang}\n{code}\n```\n\n"
-        "Give concise, actionable feedback. Speak naturally as if talking to the developer."
-    )
+    code = body.get("code",""); lang = body.get("language","python")
+    question = body.get("question","Review this code. Give concise actionable feedback.")
+    if not code: return JSONResponse(status_code=400, content={"error":"code required"})
+    prompt = (f"You are reviewing {lang} code. Developer asks: '{question}'\n\n"
+              f"```{lang}\n{code}\n```\n\nBe concise and speak naturally.")
     result = await orchestrator.llm_client.generate_response(
-        messages=[{"role": "user", "content": prompt}]
-    )
-    response_text = result.get("content", "")
-
-    # Synthesize and broadcast audio
+        messages=[{"role":"user","content":prompt}])
+    response_text = result.get("content","")
     tts = await orchestrator.speech_processor.synthesize(response_text)
     if tts.get("audio_data"):
         manager.broadcast_threadsafe({
-            "type": "code_feedback",
-            "content": response_text,
+            "type": "code_feedback", "content": response_text,
             "audio_b64": base64.b64encode(tts["audio_data"]).decode(),
-            "audio_format": tts.get("format", "mp3"),
+            "audio_format": tts.get("format","mp3"),
         })
-
     return {"response": response_text}
 
 
@@ -355,14 +307,8 @@ async def websocket_endpoint(ws: WebSocket):
                     await _handle_audio(ws, base64.b64decode(raw))
 
             elif mtype == "code_context":
-                # UI sends active file context for passive watching
                 if hasattr(orchestrator, "code_watcher"):
                     await orchestrator.code_watcher.update_context(data)
-
-            elif mtype == "screen":
-                result = await orchestrator.analyze_screen(data.get("prompt"))
-                await ws.send_json({"type":"screen","content":result.get("analysis",""),
-                                    "success":result.get("success")})
 
             elif mtype == "clear":
                 orchestrator.clear_history()
@@ -381,8 +327,10 @@ async def _handle_text(ws: WebSocket, user_text: str, speak: bool = True):
     if tool_result and tool_result.get("success"):
         text = tool_result["result"]
         if not _is_creative(text):
-            await ws.send_json({"type":"stream_end","content":text,"tool_used":tool_result["tool"]})
-            if speak: await _speak_chunk(ws, text)
+            # Send text display + audio in one shot
+            await ws.send_json({"type":"response","content":text,"tool_used":tool_result["tool"]})
+            if speak:
+                await _send_tts(ws, text)
             _add_history(user_text, text)
             return
         user_text = text
@@ -391,14 +339,18 @@ async def _handle_text(ws: WebSocket, user_text: str, speak: bool = True):
         {"role":"user","content":user_text,"timestamp":datetime.now().isoformat()})
     orchestrator._trim_history()
     rag = await orchestrator.rag_engine.query(user_text) if _needs_rag(user_text) else None
+
+    # Signal stream start
     await ws.send_json({"type":"stream_start"})
     full = await _stream_and_speak(ws, rag, speak)
-    await ws.send_json({"type":"stream_end","content":full})
+    # Signal stream done — no content here to avoid double render
+    await ws.send_json({"type":"stream_end", "content": ""})
     _add_history(None, full)
 
 
-# ── Audio handler ──────────────────────────────────────────────────
+# ── Audio (voice) handler ──────────────────────────────────────────
 async def _handle_audio(ws: WebSocket, audio_data: bytes):
+    # 1. Transcribe
     await ws.send_json({"type":"stt_start"})
     tr = await orchestrator.speech_processor.transcribe(audio_data)
 
@@ -407,106 +359,112 @@ async def _handle_audio(ws: WebSocket, audio_data: bytes):
         return
 
     user_text = tr["text"].strip()
+    # Send transcript immediately — show what was heard
     await ws.send_json({"type":"transcript","content":user_text})
     logger.info(f"Voice → '{user_text}'")
 
-    if any(w in user_text.lower() for w in {"stop","cancel","shut up","be quiet","silence"}):
+    # 2. Stop words — interrupt everything
+    if any(w in user_text.lower() for w in {"stop","cancel","shut up","be quiet","silence","quiet"}):
         interrupt_handler.interrupt()
-        await _speak_reply(ws, "Okay.", user_text, "interrupt")
+        await ws.send_json({"type":"response","content":"Okay.","tool_used":"interrupt"})
+        await _send_tts(ws, "Okay.")
         return
 
-    # Code question detection
-    code_keywords = {"code", "this function", "this file", "my code", "bug", "error",
-                     "refactor", "explain this", "what does this", "how does this work",
-                     "review", "debug", "fix this", "approach", "better way"}
-    is_code_question = any(kw in user_text.lower() for kw in code_keywords)
-    if is_code_question and hasattr(orchestrator, "code_watcher"):
+    # 3. Inject code context if relevant
+    code_kws = {"code","function","file","my code","bug","error","refactor",
+                "explain","how does","review","debug","fix","approach","better way"}
+    if any(kw in user_text.lower() for kw in code_kws) and hasattr(orchestrator,"code_watcher"):
         ctx = orchestrator.code_watcher.get_context_snippet()
         if ctx:
             user_text = f"{user_text}\n\n[Current code context]\n{ctx}"
 
+    # 4. Tools
     tool_result = await orchestrator.tool_manager.detect_and_execute(user_text)
     if tool_result and tool_result.get("success"):
         text = tool_result["result"]
         if not _is_creative(text):
-            await _speak_reply(ws, text, user_text, tool_result["tool"])
+            await ws.send_json({"type":"response","content":text,"tool_used":tool_result["tool"]})
+            await _send_tts(ws, text)
             _add_history(user_text, text)
             return
         user_text = text
 
+    # 5. LLM — stream text + speak each sentence immediately
     orchestrator.conversation_history.append(
         {"role":"user","content":user_text,"timestamp":datetime.now().isoformat()})
     orchestrator._trim_history()
     rag = await orchestrator.rag_engine.query(user_text) if _needs_rag(user_text) else None
+
     await ws.send_json({"type":"stream_start"})
     full = await _stream_and_speak(ws, rag, speak=True)
-    await ws.send_json({"type":"stream_end","content":full})
-    await ws.send_json({"type":"audio_end","transcript":user_text,"content":full})
+    # FIX: send stream_end with empty content — text already shown via stream_chunk
+    # Do NOT send audio_end — audio already played via audio_chunk events
+    await ws.send_json({"type":"stream_end","content":""})
     _add_history(None, full)
 
 
-# ── Shared stream + TTS ────────────────────────────────────────────
+# ── Core: stream LLM + speak each sentence immediately ─────────────
 async def _stream_and_speak(ws: WebSocket, rag, speak: bool) -> str:
-    full, buf = "", ""
-    first_spoken = False
-    tts_tasks: list[asyncio.Task] = []
+    """
+    Streams LLM tokens to the UI while simultaneously synthesizing TTS
+    sentence by sentence. Each sentence starts playing as soon as it's
+    complete — no waiting for the full response.
+
+    Key fix: sentences are synthesized and sent to the client AS THEY
+    COMPLETE during streaming, not batched at the end.
+    """
+    full = ""
+    buf  = ""
 
     try:
         async for token in orchestrator.llm_client.stream_response(
                 messages=orchestrator.conversation_history, rag_context=rag):
+
             if interrupt_handler.is_interrupted:
                 await ws.send_json({"type":"stream_interrupted"})
-                break
-            full += token; buf += token
+                return full
+
+            full += token
+            buf  += token
+            # Send text token to UI immediately
             await ws.send_json({"type":"stream_chunk","content":token})
 
+            # When a sentence completes, synthesize + send audio right now
             if speak and _ends_sentence(buf):
-                s = buf.strip(); buf = ""
-                if s:
-                    if not first_spoken:
-                        await _speak_chunk(ws, s); first_spoken = True
-                    else:
-                        tts_tasks.append(asyncio.create_task(_speak_chunk(ws, s)))
+                sentence = buf.strip()
+                buf = ""
+                if sentence:
+                    # Fire TTS async — don't await it, let streaming continue in parallel
+                    asyncio.create_task(_send_tts(ws, sentence))
+
     except Exception as e:
         logger.error(f"LLM stream error: {e}")
-        err = "I had trouble connecting. Please check your API key or try again."
-        await ws.send_json({"type":"stream_chunk","content": err})
-        full = err; buf = ""
+        err = "I had a connection issue — please try again."
+        await ws.send_json({"type":"stream_chunk","content":err})
+        if speak:
+            asyncio.create_task(_send_tts(ws, err))
+        return err
 
+    # Flush any remaining buffer
     if speak and buf.strip():
-        if not first_spoken: await _speak_chunk(ws, buf.strip())
-        else: tts_tasks.append(asyncio.create_task(_speak_chunk(ws, buf.strip())))
+        asyncio.create_task(_send_tts(ws, buf.strip()))
 
-    if tts_tasks:
-        await asyncio.gather(*tts_tasks, return_exceptions=True)
     return full
 
 
-async def _speak_chunk(ws: WebSocket, text: str):
+async def _send_tts(ws: WebSocket, text: str):
+    """Synthesize text and send audio_chunk to client."""
     try:
         result = await orchestrator.speech_processor.synthesize(text)
         if result.get("success") and result.get("audio_data"):
             await ws.send_json({
-                "type": "audio_chunk",
-                "audio_b64": base64.b64encode(result["audio_data"]).decode(),
+                "type":         "audio_chunk",
+                "audio_b64":    base64.b64encode(result["audio_data"]).decode(),
                 "audio_format": result.get("format","mp3"),
-                "text": text,
+                "text":         text,
             })
     except Exception as e:
-        logger.warning(f"TTS chunk: {e}")
-
-
-async def _speak_reply(ws, text, transcript, tool_used):
-    try:
-        result = await orchestrator.speech_processor.synthesize(text)
-        payload = {"type":"audio_end","transcript":transcript,"content":text,"tool_used":tool_used}
-        if result.get("audio_data"):
-            payload["audio_b64"]    = base64.b64encode(result["audio_data"]).decode()
-            payload["audio_format"] = result.get("format","mp3")
-        await ws.send_json(payload)
-    except Exception as e:
-        logger.warning(f"speak_reply: {e}")
-        await ws.send_json({"type":"audio_end","transcript":transcript,"content":text,"tool_used":tool_used})
+        logger.warning(f"TTS: {e}")
 
 
 def _ends_sentence(text: str) -> bool:
@@ -521,13 +479,6 @@ def _add_history(user: Optional[str], assistant: str):
 
 
 # ── REST ───────────────────────────────────────────────────────────
-@app.post("/api/chat")
-async def chat(request: dict):
-    msg = request.get("message","")
-    if not msg: return JSONResponse(status_code=400, content={"error":"message required"})
-    result = await orchestrator.process_text_input(msg)
-    return {"response": result.get("response"), "tool_used": result.get("tool_used")}
-
 @app.post("/api/speech/synthesize")
 async def synthesize(request: dict):
     text = request.get("text","")
@@ -545,10 +496,6 @@ async def rag_add(request: dict):
         request.get("text",""),
         request.get("doc_id", f"doc_{__import__('time').time()}"), meta)
     return {"success": ok}
-
-@app.post("/api/rag/query")
-async def rag_query(request: dict):
-    return await orchestrator.rag_engine.query(request.get("query",""))
 
 @app.get("/api/history")
 async def get_history():
