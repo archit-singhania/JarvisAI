@@ -1,12 +1,14 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-# AuraScript — one-shot scaffold
-# Usage: bash ~/Documents/JarvisAI/aurascript_setup.sh
+# AuraScript — complete install
+# Run: bash ~/Documents/JarvisAI/aurascript_install.sh
 # ═══════════════════════════════════════════════════════════════════
 set -e
+REPO="$HOME/Documents/JarvisAI"
 ROOT="$HOME/Documents/AuraScript"
+
 echo ""
-echo "  ✦ AuraScript scaffolding → $ROOT"
+echo "  ✦ AuraScript install → $ROOT"
 mkdir -p "$ROOT/src" "$ROOT/assets"
 
 # ── package.json ──────────────────────────────────────────────────
@@ -28,9 +30,6 @@ cat > "$ROOT/package.json" << 'PKG'
   "devDependencies": {
     "electron":         "^31.0.0",
     "electron-builder": "^24.13.3"
-  },
-  "dependencies": {
-    "isomorphic-git": "^1.27.0"
   },
   "build": {
     "appId":       "com.architsinghania.aurascript",
@@ -108,6 +107,15 @@ contextBridge.exposeInMainWorld('aura', {
 });
 PRE
 
+# ── copy IDE HTML → src/index.html ────────────────────────────────
+if [ -f "$REPO/aurascript_ide.html" ]; then
+  cp "$REPO/aurascript_ide.html" "$ROOT/src/index.html"
+  echo "  ✓ IDE HTML installed"
+else
+  echo "  ✗ aurascript_ide.html not found in $REPO"
+  exit 1
+fi
+
 # ── placeholder icon ──────────────────────────────────────────────
 python3 -c "
 import struct, zlib
@@ -121,12 +129,23 @@ def png(r,g,b):
         +ck(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))
         +ck(b'IDAT',cd)+ck(b'IEND',b''))
 open('$ROOT/assets/icon.png','wb').write(png(0,212,255))
-print('  ✓ Icon placeholder written')
-" 2>/dev/null || echo "  ℹ Replace assets/icon.png with a real icon"
+" 2>/dev/null || echo "  ℹ  Replace assets/icon.png with a real icon later"
 
 echo ""
-echo "  ✓ Shell scaffold complete"
-echo "  Next: npm install  →  npm start"
-echo ""
-echo "  Make sure Daisy is running:"
-echo "  cd ~/Documents/JarvisAI/backend && uvicorn app.main:app --reload"
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║       AuraScript installed successfully!             ║"
+echo "╠══════════════════════════════════════════════════════╣"
+echo "║  cd ~/Documents/AuraScript                          ║"
+echo "║  npm install                                         ║"
+echo "║  npm start          # or: npm run dev                ║"
+echo "╠══════════════════════════════════════════════════════╣"
+echo "║  Daisy AI must be running first:                     ║"
+echo "║  cd ~/Documents/JarvisAI/backend                    ║"
+echo "║  source .venv/bin/activate                           ║"
+echo "║  uvicorn app.main:app --reload                       ║"
+echo "╠══════════════════════════════════════════════════════╣"
+echo "║  Keyboard shortcuts:                                 ║"
+echo "║  ⌘O → Open folder    ⌘R → Run file                  ║"
+echo "║  ⌘S → Save           ⌘K → Command palette           ║"
+echo "║  ⌘⇧S → Checkpoint    ⌘M → Toggle voice              ║"
+echo "╚══════════════════════════════════════════════════════╝"
