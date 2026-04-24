@@ -1,5 +1,5 @@
 """
-Daisy AI — configuration v7
+Girl Wednesday AI — configuration v8
 All settings from .env — nothing hardcoded.
 """
 from pathlib import Path
@@ -25,45 +25,46 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(True,      env="DEBUG")
 
     # ── User identity ────────────────────────────────────────────────
-    USER_NAME: str = Field("Archit", env="USER_NAME")
+    USER_NAME:      str = Field("Sir",    env="USER_NAME")
+    USER_REAL_NAME: str = Field("Archit", env="USER_REAL_NAME")
 
     # ── LLM ─────────────────────────────────────────────────────────
     LLM_PROVIDER:   str   = Field("groq",                    env="LLM_PROVIDER")
     LLM_MODEL:      str   = Field("llama-3.3-70b-versatile", env="LLM_MODEL")
-    TEMPERATURE:    float = Field(0.75, env="TEMPERATURE")
-    MAX_TOKENS:     int   = Field(1024, env="MAX_TOKENS")
+    TEMPERATURE:    float = Field(0.85, env="TEMPERATURE")
+    MAX_TOKENS:     int   = Field(800,  env="MAX_TOKENS")
     JARVIS_PERSONA: str   = Field(
-        "You are Daisy, a warm intelligent coding assistant and personal AI. "
-        "You have a soft friendly female personality. "
-        "Keep responses concise and natural. Never say you are an AI unless asked.",
+        "You are Wednesday — a brilliant, warm, witty British female AI assistant. "
+        "You address the user as 'Sir' naturally. Keep voice responses to 1-2 sentences max. "
+        "Be genuine, curious, and genuinely helpful.",
         env="JARVIS_PERSONA"
     )
+
+    # ── STT ─────────────────────────────────────────────────────────
+    STT_PROVIDER:        str = Field("groq",                   env="STT_PROVIDER")
+    WHISPER_MODEL:       str = Field("whisper-large-v3-turbo", env="WHISPER_MODEL")
+    LOCAL_WHISPER_MODEL: str = Field("base",                   env="LOCAL_WHISPER_MODEL")
+
+    # ── TTS ─────────────────────────────────────────────────────────
+    TTS_PROVIDER: str = Field("elevenlabs", env="TTS_PROVIDER")
+
+    # ElevenLabs — Rachel (21m00Tcm4TlvDq8ikWAM) works on free tier
+    ELEVENLABS_VOICE_ID:      str   = Field("21m00Tcm4TlvDq8ikWAM", env="ELEVENLABS_VOICE_ID")
+    ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5",    env="ELEVENLABS_MODEL_ID")
+    ELEVENLABS_STABILITY:     float = Field(0.40, env="ELEVENLABS_STABILITY")
+    ELEVENLABS_SIMILARITY:    float = Field(0.85, env="ELEVENLABS_SIMILARITY")
+    ELEVENLABS_STYLE:         float = Field(0.25, env="ELEVENLABS_STYLE")
+    ELEVENLABS_SPEAKER_BOOST: bool  = Field(True, env="ELEVENLABS_SPEAKER_BOOST")
+
+    # Edge TTS — British female fallback
+    EDGE_TTS_VOICE:  str = Field("en-GB-SoniaNeural", env="EDGE_TTS_VOICE")
+    EDGE_TTS_RATE:   str = Field("+5%",  env="EDGE_TTS_RATE")
+    EDGE_TTS_VOLUME: str = Field("+0%",  env="EDGE_TTS_VOLUME")
+    EDGE_TTS_PITCH:  str = Field("+0Hz", env="EDGE_TTS_PITCH")
 
     # ── Vision ──────────────────────────────────────────────────────
     VISION_PROVIDER: str = Field("ollama",      env="VISION_PROVIDER")
     VISION_MODEL:    str = Field("gpt-4o-mini", env="VISION_MODEL")
-
-    # ── STT ─────────────────────────────────────────────────────────
-    STT_PROVIDER:        str = Field("groq",                  env="STT_PROVIDER")
-    WHISPER_MODEL:       str = Field("whisper-large-v3-turbo", env="WHISPER_MODEL")
-    LOCAL_WHISPER_MODEL: str = Field("base",                   env="LOCAL_WHISPER_MODEL")
-
-    # ── TTS — edge is primary (ElevenLabs free blocks library voices) ─
-    TTS_PROVIDER: str = Field("edge", env="TTS_PROVIDER")
-
-    # ── ElevenLabs ──────────────────────────────────────────────────
-    ELEVENLABS_VOICE_ID:      str   = Field("9BWtsMINqrJLrRacOk9x", env="ELEVENLABS_VOICE_ID")
-    ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5",    env="ELEVENLABS_MODEL_ID")
-    ELEVENLABS_STABILITY:     float = Field(0.50, env="ELEVENLABS_STABILITY")
-    ELEVENLABS_SIMILARITY:    float = Field(0.85, env="ELEVENLABS_SIMILARITY")
-    ELEVENLABS_STYLE:         float = Field(0.20, env="ELEVENLABS_STYLE")
-    ELEVENLABS_SPEAKER_BOOST: bool  = Field(True, env="ELEVENLABS_SPEAKER_BOOST")
-
-    # ── Edge TTS (primary free voice) ───────────────────────────────
-    EDGE_TTS_VOICE:  str = Field("en-US-JennyNeural", env="EDGE_TTS_VOICE")
-    EDGE_TTS_RATE:   str = Field("+5%",  env="EDGE_TTS_RATE")
-    EDGE_TTS_VOLUME: str = Field("+0%",  env="EDGE_TTS_VOLUME")
-    EDGE_TTS_PITCH:  str = Field("+0Hz", env="EDGE_TTS_PITCH")
 
     # ── Ollama ──────────────────────────────────────────────────────
     OLLAMA_HOST:         str = Field("http://localhost:11434", env="OLLAMA_HOST")
@@ -158,11 +159,11 @@ LOGGING_CONFIG = {
                     "formatter": "default", "stream": "ext://sys.stdout"},
         "file": {"class": "logging.handlers.RotatingFileHandler", "level": "DEBUG",
                  "formatter": "detailed",
-                 "filename": str(settings.LOGS_DIR / "jarvis.log"),
+                 "filename": str(settings.LOGS_DIR / "wednesday.log"),
                  "maxBytes": 10485760, "backupCount": 5},
     },
     "loggers": {
-        "jarvis": {"level": "DEBUG", "handlers": ["console", "file"], "propagate": False},
+        "wednesday": {"level": "DEBUG", "handlers": ["console", "file"], "propagate": False},
     },
     "root": {"level": "INFO", "handlers": ["console"]},
 }
