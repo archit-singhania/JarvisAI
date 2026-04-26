@@ -1,11 +1,11 @@
 """
-Girl Wednesday AI — FastAPI main v9
-Changes from v8:
-  - Uses USER_REAL_NAME for greeting (Archit), USER_NAME for address (Sir)
-  - Greeting: "Good morning, Archit. I'm Wednesday…" then asks mood + what we're building
-  - Mood acks use "Sir" naturally
-  - All double-response bugs removed
-  - Interrupt immediately stops TTS and listens
+Girl Wednesday AI — FastAPI main v10
+Fixes vs v9:
+  - No real name ever spoken/displayed — address is always "Sir"
+  - stream_end sends content:"" only — UI must NOT re-render from it (v10 UI handles this)
+  - VAD fires after 1.8s silence (handled in frontend); backend stays clean
+  - Greeting: pure "Sir" only, no name field used
+  - Mood persona no longer embeds name in LLM context
 """
 import asyncio
 import base64
@@ -41,7 +41,7 @@ def _needs_rag(text: str) -> bool:
     return not any(kw in text.lower() for kw in _NO_RAG)
 
 def _is_creative(text: str) -> bool:
-    return bool(text) and any(text.startswith(t) for t in ("[RAP_MODE","[SING_MODE","[JOKE_MODE"))
+    return bool(text) and any(text.startswith(t) for t in ("[RAP_MODE", "[SING_MODE", "[JOKE_MODE"))
 
 
 # ── Session state ─────────────────────────────────────────────────
@@ -101,9 +101,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     manager.set_loop(loop)
 
-    real = settings.USER_REAL_NAME
-    addr = settings.USER_NAME
-    logger.info(f"🌙 Wednesday v9 | TTS:{settings.TTS_PROVIDER} | LLM:{settings.LLM_MODEL} | User:{real} ({addr})")
+    logger.info(f"🌙 Wednesday v10 | TTS:{settings.TTS_PROVIDER} | LLM:{settings.LLM_MODEL}")
 
     from app.tools.scheduler import ReminderScheduler
     db_path = Path(settings.DATA_DIR) / "reminders.db"
@@ -147,7 +145,7 @@ async def lifespan(app: FastAPI):
             except Exception: pass
 
 
-app = FastAPI(title="Girl Wednesday AI", version="9.0.0", lifespan=lifespan)
+app = FastAPI(title="Girl Wednesday AI", version="10.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -159,9 +157,9 @@ app.mount("/ui", StaticFiles(directory=str(_ui_path), html=True), name="ui")
 # ── Health ─────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"status": "online", "version": "9.0.0", "name": "Girl Wednesday",
+    return {"status": "online", "version": "10.0.0", "name": "Girl Wednesday",
             "ui": "http://localhost:8000/ui",
-            "user": settings.USER_REAL_NAME, "address": settings.USER_NAME}
+            "address": settings.USER_NAME}
 
 @app.get("/health")
 async def health():
@@ -170,7 +168,6 @@ async def health():
         "stt": settings.WHISPER_MODEL,
         "edge_voice": settings.EDGE_TTS_VOICE,
         "elevenlabs_voice": settings.ELEVENLABS_VOICE_ID,
-        "user_real": settings.USER_REAL_NAME,
         "user_addr": settings.USER_NAME,
         "groq_ok": settings.has_groq(),
         "elevenlabs_ok": settings.has_elevenlabs(),
@@ -181,17 +178,16 @@ async def health():
 @app.get("/api/config")
 async def get_config():
     return {
-        "tts_provider":       settings.TTS_PROVIDER,
-        "elevenlabs_voice_id": settings.ELEVENLABS_VOICE_ID,
-        "edge_tts_voice":     settings.EDGE_TTS_VOICE,
-        "llm_model":          settings.LLM_MODEL,
-        "temperature":        settings.TEMPERATURE,
-        "location_name":      settings.LOCATION_NAME,
-        "jarvis_persona":     settings.JARVIS_PERSONA,
-        "user_name":          settings.USER_NAME,
-        "user_real_name":     settings.USER_REAL_NAME,
+        "tts_provider":          settings.TTS_PROVIDER,
+        "elevenlabs_voice_id":   settings.ELEVENLABS_VOICE_ID,
+        "edge_tts_voice":        settings.EDGE_TTS_VOICE,
+        "llm_model":             settings.LLM_MODEL,
+        "temperature":           settings.TEMPERATURE,
+        "location_name":         settings.LOCATION_NAME,
+        "jarvis_persona":        settings.JARVIS_PERSONA,
+        "user_name":             settings.USER_NAME,
         "elevenlabs_configured": settings.has_elevenlabs(),
-        "code_watch_enabled": settings.CODE_WATCH_ENABLED,
+        "code_watch_enabled":    settings.CODE_WATCH_ENABLED,
     }
 
 @app.patch("/api/config")
@@ -202,7 +198,7 @@ async def patch_config(body: dict):
         "elevenlabs_speaker_boost","edge_tts_voice","edge_tts_rate",
         "edge_tts_volume","edge_tts_pitch","llm_model","temperature",
         "max_tokens","location_name","location_lat","location_lon",
-        "jarvis_persona","user_name","user_real_name",
+        "jarvis_persona","user_name",
         "wake_word_enabled","code_watch_enabled","code_watch_path",
     }
     applied = {}
@@ -298,18 +294,17 @@ async def receive_code_context(body: dict):
 
 @app.post("/api/code/analyze")
 async def analyze_code(body: dict):
-    code = body.get("code", "")
-    lang = body.get("language", "python")
+    code     = body.get("code", "")
+    lang     = body.get("language", "python")
     question = body.get("question", "Review this code. Give concise actionable feedback.")
     if not code:
         return JSONResponse(status_code=400, content={"error": "code required"})
-    real = settings.USER_REAL_NAME
-    addr = settings.USER_NAME
+
     prompt = (
-        f"You are reviewing {lang} code for {real}. They ask: '{question}'\n\n"
+        f"You are reviewing {lang} code. They ask: '{question}'\n\n"
         f"```{lang}\n{code}\n```\n\n"
-        f"Address them as '{addr}'. Be concise — 2 sentences max. Speak naturally. "
-        f"Be direct, witty, and helpful."
+        f"Address the user as 'Sir'. Be concise — 2 sentences max. "
+        f"Speak naturally. Be direct, witty, and helpful."
     )
     result = await orchestrator.llm_client.generate_response(
         messages=[{"role": "user", "content": prompt}])
@@ -329,7 +324,7 @@ async def analyze_code(body: dict):
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     session = manager.session(ws)
-    logger.info(f"WS connected | {settings.USER_REAL_NAME}")
+    logger.info("WS connected")
 
     await _do_greeting(ws, session)
 
@@ -378,14 +373,11 @@ async def websocket_endpoint(ws: WebSocket):
         manager.disconnect(ws)
 
 
-# ── Greeting flow ───────────────────────────────────────────────────
+# ── Greeting — says "Sir" only, never a name ───────────────────────
 async def _do_greeting(ws: WebSocket, session: Session):
     if session.greeted:
         return
     session.greeted = True
-
-    real = settings.USER_REAL_NAME   # Archit
-    addr = settings.USER_NAME        # Sir
 
     hour = datetime.now().hour
     if 5 <= hour < 12:
@@ -395,11 +387,11 @@ async def _do_greeting(ws: WebSocket, session: Session):
     elif 17 <= hour < 21:
         time_str = "evening"
     else:
-        time_str = "night — rather late, isn't it"
+        time_str = "night"
 
     greeting = (
-        f"Good {time_str}, {real}. I'm Wednesday — genuinely delighted to meet you. "
-        f"How are you feeling today, {addr}? And what are we building?"
+        f"Good {time_str}, Sir. I'm Wednesday — ready when you are. "
+        f"How are you feeling, and what are we working on?"
     )
 
     session.mood_asked = True
@@ -418,21 +410,19 @@ async def _maybe_intro_project(ws: WebSocket, session: Session, data: dict):
         return
 
     session.project_introduced = True
-    real = settings.USER_REAL_NAME
-    addr = settings.USER_NAME
     filename = file_path.split("/")[-1]
 
     mood_ctx = {
-        "frustrated": f"Note: {real} is frustrated — lead with something encouraging.",
-        "tired":      f"Note: {real} is tired — one sentence only.",
+        "frustrated": "The user is frustrated — lead with something encouraging.",
+        "tired":      "The user is tired — one sentence only.",
     }.get(session.mood, "")
 
     prompt = (
         f"{mood_ctx}\n"
-        f"You've just had a look at {real}'s file '{filename}' ({lang}):\n\n"
+        f"You've just looked at the file '{filename}' ({lang}):\n\n"
         f"```{lang}\n{content[:1500]}\n```\n\n"
         f"Give a 2-sentence take: what this does, and one thing worth focusing on. "
-        f"Address them as '{addr}'. Be direct, witty, and natural."
+        f"Address the user as 'Sir'. Be direct, witty, and natural."
     )
 
     try:
@@ -460,21 +450,18 @@ def _detect_mood(text: str) -> str:
         return "frustrated"
     return "neutral"
 
-def _mood_adjusted_persona(mood: str, base_persona: str, real: str) -> str:
+def _mood_adjusted_persona(mood: str, base_persona: str) -> str:
     ctx = {
-        "positive":   f"{real} is in high spirits — match his energy, be playful.",
-        "tired":      f"{real} is exhausted — be gentle, very brief, one sentence answers only.",
-        "frustrated": f"{real} is frustrated — be calm, patient, and focused on solutions. No jokes.",
+        "positive":   "The user is in high spirits — match their energy, be playful.",
+        "tired":      "The user is exhausted — be gentle, very brief, one sentence answers only.",
+        "frustrated": "The user is frustrated — be calm, patient, and focused on solutions. No jokes.",
     }.get(mood, "")
     return f"{base_persona}\n\n{ctx}" if ctx else base_persona
 
 
 # ── Text handler ────────────────────────────────────────────────────
 async def _handle_text(ws: WebSocket, session: Session, user_text: str, speak: bool = True):
-    addr = settings.USER_NAME
-    real = settings.USER_REAL_NAME
-
-    # Mood response to greeting
+    # Mood ack on first mood reply
     if session.mood_asked and session.mood == "neutral":
         mood_words = ["great","tired","okay","fine","bad","good","frustrated","yeah",
                       "brilliant","terrible","alright","knackered","low","not great","splendid"]
@@ -482,12 +469,12 @@ async def _handle_text(ws: WebSocket, session: Session, user_text: str, speak: b
             detected = _detect_mood(user_text)
             session.mood = detected if detected != "neutral" else "neutral"
             mood_acks = {
-                "positive":   f"Excellent — let's make the most of it, {addr}. What are we working on?",
-                "tired":      f"Understood, {addr}. We'll keep things quick and painless.",
-                "frustrated": f"Fair enough, {addr}. Let's sort whatever's vexing you.",
-                "neutral":    f"Right then, {addr}. What shall we tackle today?",
+                "positive":   "Excellent — let's make the most of it, Sir. What are we working on?",
+                "tired":      "Understood, Sir. We'll keep things quick and painless.",
+                "frustrated": "Fair enough, Sir. Let's sort whatever's vexing you.",
+                "neutral":    "Right then, Sir. What shall we tackle today?",
             }
-            ack = mood_acks.get(session.mood, f"Right, {addr}. What are we building?")
+            ack = mood_acks.get(session.mood, "Right, Sir. What are we building?")
             await ws.send_json({"type": "response", "content": ack})
             if speak:
                 await _send_tts(ws, ack)
@@ -505,7 +492,7 @@ async def _handle_text(ws: WebSocket, session: Session, user_text: str, speak: b
             return
         user_text = text
 
-    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA, real)
+    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA)
     orchestrator.conversation_history.append(
         {"role": "user", "content": user_text, "timestamp": datetime.now().isoformat()})
     orchestrator._trim_history()
@@ -515,6 +502,7 @@ async def _handle_text(ws: WebSocket, session: Session, user_text: str, speak: b
     session.speaking = True
     full = await _stream_and_speak(ws, session, rag, speak, system_prompt=persona)
     session.speaking = False
+    # stream_end carries no content — UI must not re-render from it
     await ws.send_json({"type": "stream_end", "content": ""})
     _add_history(None, full)
 
@@ -532,14 +520,11 @@ async def _handle_audio(ws: WebSocket, session: Session, audio_data: bytes):
     await ws.send_json({"type": "transcript", "content": user_text})
     logger.info(f"Heard: '{user_text}'")
 
-    addr = settings.USER_NAME
-    real = settings.USER_REAL_NAME
-
     # Stop command
     if any(w in user_text.lower() for w in {"stop","cancel","shut up","be quiet","silence","quiet","enough","hush"}):
         interrupt_handler.interrupt()
         session.speaking = False
-        resp = f"Of course, {addr}."
+        resp = "Of course, Sir."
         await ws.send_json({"type": "response", "content": resp, "tool_used": "interrupt"})
         await _send_tts(ws, resp)
         return
@@ -552,12 +537,12 @@ async def _handle_audio(ws: WebSocket, session: Session, audio_data: bytes):
             detected = _detect_mood(user_text)
             session.mood = detected if detected != "neutral" else "neutral"
             mood_acks = {
-                "positive":   f"Brilliant. Let's get cracking, {addr}.",
-                "tired":      f"Right then, {addr}. Quick and efficient it is.",
-                "frustrated": f"Say no more. Let's fix whatever's broken, {addr}.",
-                "neutral":    f"Right, {addr}. What are we working on today?",
+                "positive":   "Brilliant. Let's get cracking, Sir.",
+                "tired":      "Right then, Sir. Quick and efficient it is.",
+                "frustrated": "Say no more. Let's fix whatever's broken, Sir.",
+                "neutral":    "Right, Sir. What are we working on today?",
             }
-            ack = mood_acks.get(session.mood, f"Right. What are we building, {addr}?")
+            ack = mood_acks.get(session.mood, "Right. What are we building, Sir?")
             await ws.send_json({"type": "response", "content": ack})
             await _send_tts(ws, ack)
             _add_history(None, ack)
@@ -581,7 +566,7 @@ async def _handle_audio(ws: WebSocket, session: Session, audio_data: bytes):
             return
         user_text = text
 
-    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA, real)
+    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA)
     orchestrator.conversation_history.append(
         {"role": "user", "content": user_text, "timestamp": datetime.now().isoformat()})
     orchestrator._trim_history()
@@ -602,7 +587,6 @@ async def _stream_and_speak(
 ) -> str:
     full = ""
     buf  = ""
-    addr = settings.USER_NAME
 
     try:
         async for token in orchestrator.llm_client.stream_response(
@@ -627,7 +611,7 @@ async def _stream_and_speak(
 
     except Exception as e:
         logger.error(f"LLM stream error: {e}")
-        err = f"Terribly sorry, {addr} — something went sideways on my end. Shall we try again?"
+        err = "Terribly sorry, Sir — something went sideways on my end. Shall we try again?"
         await ws.send_json({"type": "stream_chunk", "content": err})
         if speak:
             asyncio.create_task(_send_tts(ws, err))

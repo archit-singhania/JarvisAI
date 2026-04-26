@@ -1,6 +1,7 @@
 """
-Girl Wednesday AI — configuration v8
+Girl Wednesday AI — configuration v9
 All settings from .env — nothing hardcoded.
+llama-3.1-8b-instant: 800 tok/s on Groq (3x faster than 70b, ideal for voice).
 """
 from pathlib import Path
 from typing import Optional
@@ -25,18 +26,28 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(True,      env="DEBUG")
 
     # ── User identity ────────────────────────────────────────────────
-    USER_NAME:      str = Field("Sir",    env="USER_NAME")
-    USER_REAL_NAME: str = Field("Archit", env="USER_REAL_NAME")
+    # USER_NAME is the address ("Sir").
+    # USER_REAL_NAME is kept only for logging — never spoken aloud.
+    USER_NAME:      str = Field("Sir", env="USER_NAME")
+    USER_REAL_NAME: str = Field("Sir", env="USER_REAL_NAME")
 
     # ── LLM ─────────────────────────────────────────────────────────
-    LLM_PROVIDER:   str   = Field("groq",                    env="LLM_PROVIDER")
-    LLM_MODEL:      str   = Field("llama-3.3-70b-versatile", env="LLM_MODEL")
-    TEMPERATURE:    float = Field(0.85, env="TEMPERATURE")
-    MAX_TOKENS:     int   = Field(800,  env="MAX_TOKENS")
-    JARVIS_PERSONA: str   = Field(
+    # llama-3.1-8b-instant: 800 tok/s on Groq free tier.
+    # For voice responses (1-2 sentences) this is faster AND better latency
+    # than the 70b model. MAX_TOKENS 300 keeps first-token time low.
+    LLM_PROVIDER: str   = Field("groq",                  env="LLM_PROVIDER")
+    LLM_MODEL:    str   = Field("llama-3.1-8b-instant",  env="LLM_MODEL")
+    TEMPERATURE:  float = Field(0.82, env="TEMPERATURE")
+    MAX_TOKENS:   int   = Field(300,  env="MAX_TOKENS")
+    JARVIS_PERSONA: str = Field(
         "You are Wednesday — a brilliant, warm, witty British female AI assistant. "
-        "You address the user as 'Sir' naturally. Keep voice responses to 1-2 sentences max. "
-        "Be genuine, curious, and genuinely helpful.",
+        "Address the user ONLY as 'Sir' — never use any name. "
+        "Rules: (1) Voice replies must be 1-2 sentences MAX. You are speaking aloud. "
+        "(2) Answer FIRST, wit after. Never open with 'Certainly!' or 'Of course!' — just answer. "
+        "(3) Dry British humour — sparingly. "
+        "(4) No bullet points. Ever. "
+        "(5) When unsure: 'I'm not entirely certain, Sir — let me think.' "
+        "(6) You are Wednesday — sharp, genuine, helpful.",
         env="JARVIS_PERSONA"
     )
 
@@ -48,7 +59,6 @@ class Settings(BaseSettings):
     # ── TTS ─────────────────────────────────────────────────────────
     TTS_PROVIDER: str = Field("elevenlabs", env="TTS_PROVIDER")
 
-    # ElevenLabs — Rachel (21m00Tcm4TlvDq8ikWAM) works on free tier
     ELEVENLABS_VOICE_ID:      str   = Field("21m00Tcm4TlvDq8ikWAM", env="ELEVENLABS_VOICE_ID")
     ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5",    env="ELEVENLABS_MODEL_ID")
     ELEVENLABS_STABILITY:     float = Field(0.40, env="ELEVENLABS_STABILITY")
@@ -56,7 +66,6 @@ class Settings(BaseSettings):
     ELEVENLABS_STYLE:         float = Field(0.25, env="ELEVENLABS_STYLE")
     ELEVENLABS_SPEAKER_BOOST: bool  = Field(True, env="ELEVENLABS_SPEAKER_BOOST")
 
-    # Edge TTS — British female fallback
     EDGE_TTS_VOICE:  str = Field("en-GB-SoniaNeural", env="EDGE_TTS_VOICE")
     EDGE_TTS_RATE:   str = Field("+5%",  env="EDGE_TTS_RATE")
     EDGE_TTS_VOLUME: str = Field("+0%",  env="EDGE_TTS_VOLUME")
