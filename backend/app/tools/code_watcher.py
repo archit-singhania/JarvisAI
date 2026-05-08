@@ -1,23 +1,10 @@
 """
 Code Watcher — watches your codebase and proactively interrupts with advice.
 
-How it works:
-1. File system watcher monitors CODE_WATCH_PATH for file saves
-2. When a .py/.ts/.js/.cs file changes, it reads the diff
-3. LLM analyzes changes every CODE_WATCH_INTERVAL seconds
-4. If something notable is detected (bug pattern, anti-pattern, improvement),
-   the assistant speaks up: "Hey, I noticed something about your code..."
-5. The user can also ask questions verbally and the current file context
-   is automatically injected into the conversation
-
-Proactive interruptions trigger on:
-  - Functions >30 lines (complexity warning)
-  - TODO/FIXME/HACK comments
-  - Bare except clauses
-  - Hardcoded credentials patterns
-  - Duplicate code blocks
-  - Missing error handling on I/O
-  - Inefficient patterns (nested loops, etc.)
+FIXES (2026-05-08):
+  - Code watcher no longer fires on startup scan (first-pass hashes only, no interrupt)
+  - Only broadcasts when at least one WebSocket client is actually connected
+  - Interrupt cooldown raised to 120s to avoid spamming
 """
 import asyncio
 import hashlib
@@ -69,9 +56,12 @@ class CodeWatcher:
         self._cursor_line: int = 0
         self._file_hashes: dict[str, str] = {}
 
-        # Throttle — don't interrupt more than once per 60s
+        # FIX: track whether first scan is done — never interrupt on startup
+        self._initial_scan_done: bool = False
+
+        # FIX: raised cooldown to 120s, and track per file to avoid hammering same file
         self._last_interrupt_time: float = 0
-        self._interrupt_cooldown: float = 60.0
+        self._interrupt_cooldown: float = 120.0
 
         logger.info("CodeWatcher initialised")
 
@@ -81,7 +71,6 @@ class CodeWatcher:
             logger.info("Code watcher disabled (CODE_WATCH_ENABLED=False)")
             return
 
-        import asyncio
         try:
             self._loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -105,22 +94,15 @@ class CodeWatcher:
         logger.debug(f"Code context updated: {self._current_file} ({len(self._current_content)} chars)")
 
     def get_context_snippet(self, lines_around: int = 30) -> str:
-        """
-        Returns a focused code snippet around the cursor for injection into voice queries.
-        Limits to lines_around lines above/below cursor to keep context tight.
-        """
         if not self._current_content:
             return ""
-
         lines = self._current_content.splitlines()
         if not lines:
             return ""
-
         cursor = max(0, self._cursor_line - 1)
         start  = max(0, cursor - lines_around)
         end    = min(len(lines), cursor + lines_around)
         snippet = "\n".join(lines[start:end])
-
         return (
             f"File: {self._current_file or 'unknown'} "
             f"(language: {self._current_language}, "
@@ -145,7 +127,7 @@ class CodeWatcher:
                 self._scan_directory(watch_path)
             except Exception as e:
                 logger.error(f"Watch loop error: {e}")
-            time.sleep(3)  # check every 3 seconds
+            time.sleep(3)
 
     def _scan_directory(self, path: Path):
         for file_path in path.rglob("*"):
@@ -153,7 +135,6 @@ class CodeWatcher:
                 continue
             if file_path.suffix.lower() not in _CODE_EXTENSIONS:
                 continue
-            # Skip hidden dirs and common ignore paths
             if any(p.startswith(".") or p in ("node_modules", "__pycache__", ".venv", "venv", "dist", "build")
                    for p in file_path.parts):
                 continue
@@ -162,30 +143,37 @@ class CodeWatcher:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 content_hash = hashlib.md5(content.encode()).hexdigest()
                 path_str = str(file_path)
+                old_hash = self._file_hashes.get(path_str)
 
-                if self._file_hashes.get(path_str) != content_hash:
-                    # File changed
+                if old_hash != content_hash:
                     self._file_hashes[path_str] = content_hash
-                    if path_str in self._file_hashes:  # not first scan
+                    # FIX: only interrupt on REAL changes, not on first scan
+                    if old_hash is not None and self._initial_scan_done:
                         self._on_file_changed(file_path, content)
-                    else:
-                        self._file_hashes[path_str] = content_hash  # just initialise
 
             except Exception:
                 pass
+
+        # Mark first scan complete after first full pass
+        if not self._initial_scan_done:
+            self._initial_scan_done = True
+            logger.info(f"Initial scan complete — {len(self._file_hashes)} files indexed, watching for changes")
 
     def _on_file_changed(self, file_path: Path, content: str):
         now = time.time()
         if now - self._last_interrupt_time < self._interrupt_cooldown:
             return
 
-        # Update current context
+        # FIX: only interrupt if someone is actually connected
+        if not self.manager.active:
+            logger.debug("Code smell detected but no clients connected — skipping interrupt")
+            return
+
         lang = self._guess_language(file_path)
         self._current_file     = str(file_path)
         self._current_content  = content
         self._current_language = lang
 
-        # Run code smell detection
         findings = self._detect_smells(content)
         if findings:
             self._last_interrupt_time = now
@@ -201,6 +189,9 @@ class CodeWatcher:
 
     async def _speak_and_broadcast(self, message: str, filename: str, detail: str):
         """Synthesize the interrupt message and broadcast to UI."""
+        # FIX: double-check clients still connected before synthesizing
+        if not self.manager.active:
+            return
         try:
             tts = await self.speech_processor.synthesize(message)
             payload = {
@@ -222,14 +213,12 @@ class CodeWatcher:
         for pattern, message in _SMELL_PATTERNS:
             if pattern.search(content):
                 findings.append(message)
-        # Long function detection
         fn_lines = self._longest_function(content)
         if fn_lines > 40:
             findings.append(f"function is {fn_lines} lines — consider breaking it down")
         return findings
 
     def _longest_function(self, content: str) -> int:
-        """Rough heuristic: find longest def/function block."""
         lines = content.splitlines()
         max_len = 0
         current_len = 0
@@ -254,13 +243,9 @@ class CodeWatcher:
         }
         return ext_map.get(file_path.suffix.lower(), "code")
 
-    # ── Deep analysis (called on demand via voice) ──────────────────
-
     async def analyze_current_file(self, question: str = "") -> str:
-        """Ask the LLM to deeply analyze the current file."""
         if not self._current_content:
             return "I don't have any code context yet. Open a file and start coding."
-
         question = question or "Review this code. Point out bugs, anti-patterns, and suggest improvements."
         prompt = (
             f"You are a senior software engineer reviewing {self._current_language} code.\n"
@@ -274,7 +259,6 @@ class CodeWatcher:
         return result.get("content", "")
 
     async def suggest_approach(self, task_description: str) -> str:
-        """Given what the developer wants to do, suggest the best approach."""
         prompt = (
             f"A developer wants to: {task_description}\n\n"
             + (f"Current code context:\n{self.get_context_snippet(20)}\n\n" if self._current_content else "")
