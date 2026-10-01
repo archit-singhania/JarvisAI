@@ -15,6 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\wednesday.png" />
     <!-- Audio recording from mic -->
     <PackageReference Include="NAudio" Version="2.2.1" />
     <!-- MVVM -->

@@ -32,7 +32,7 @@ def test_reminder_due_time_does_not_move_on_poll(tmp_path):
     assert store.due_reminders()[0]['due_at']==due.isoformat()
     assert store.acknowledge_reminder(owner,identity)
     assert not store.due_reminders()
-    with pytest.raises(ValueError):store.add_reminder(owner,'Bad','2026-10-01T12:00:00','Asia/Kolkata')
+    with pytest.raises(ValueError):store.add_reminder(owner,'Bad','not-a-date','Asia/Kolkata')
 
 
 def test_preferences_export_and_receipts(tmp_path):

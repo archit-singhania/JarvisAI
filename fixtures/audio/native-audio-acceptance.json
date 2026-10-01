@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "syntheticToneFixture": true,
+  "checks": [
+    {
+      "format": "wav",
+      "decodedBytes": 19200,
+      "sampleRate": 24000,
+      "channels": 1
+    },
+    {
+      "format": "mp3",
+      "decodedBytes": 21888,
+      "sampleRate": 24000,
+      "channels": 1
+    }
+  ]
+}

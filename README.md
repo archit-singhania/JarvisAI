@@ -1,79 +1,56 @@
-# Jarvis AI
+# Wednesday · JarvisAI · AuraScript
 
-An advanced, Siri-like voice assistant with a sleek WPF desktop UI, powered by a Python FastAPI backend.
-Built to be impressive on a resume and as a portfolio project for roles at top-tier companies.
+A private thinking and coding workspace with three maintained clients: a responsive browser assistant, a .NET 10 WPF Windows application, and an Electron editor with offline Monaco. Original silver/violet branding, pearl/graphite/system appearances, adaptive navigation, and restrained motion replace the earlier scaffold interfaces.
 
----
+![Wednesday browser](docs/screenshots/wednesday-desktop-dark.png)
 
-## Architecture
+## Run locally
 
-```
-desktop/   → C# WPF (.NET 8) — Iron Man-style dark UI
-backend/   → Python FastAPI — AI brain (LLM, STT, TTS, Vision, RAG, Tools)
-```
+Use Python 3.11 for optional ML engines; the core service is also verified on Python 3.12. Create a virtual environment and install `backend/requirements-core.txt`:
 
-Communication: WebSocket (`ws://localhost:8000/ws`) for real-time voice + text.
-
----
-
-## Unique features
-
-- 🎤 Voice input via Groq Whisper (fast, free)
-- 🔊 Natural TTS via Coqui (free, local)
-- 🧠 LLM: Groq llama-3.1-70b (online) / Ollama (offline)
-- 🛠 Tool system: time, weather, open apps, web search, rap, sing, jokes, reminders
-- 📖 RAG memory: ChromaDB + sentence-transformers (feed it documents, it remembers)
-- 🖥 Screen analysis: "Hey Jarvis, what's on my screen?" via LLaVA vision
-- 🎵 Rap & sing on command — unique feature no other open-source assistant has
-
----
-
-## Quickstart
-
-### Backend
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env            # add your GROQ_API_KEY
-uvicorn app.main:app --reload
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\python -m pip install -r backend\requirements-core.txt
+Copy-Item backend\.env.example backend\.env # Only when no local .env exists
+.venv\Scripts\python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
-### Desktop (Windows)
-```bash
-cd desktop
-dotnet restore
-dotnet run
+Open [Wednesday](http://127.0.0.1:8000/ui/). Sessions, messages, documents, memories, reminders, workflows, preferences and receipts persist in an owned SQLite WAL workspace. Each client retains its own private session; copying a client session credential is the explicit way to restore that identity. Back up `data/workspace.db` using SQLite's backup API before upgrades; do not delete existing data.
+
+For local AI, run Ollama and install the model named in `OLLAMA_MODEL`. Provider status appears in Preferences. Optional Groq/OpenAI/Gemini keys belong in the ignored `backend/.env`. Without an engine, the interface displays the actual unavailable result. It does not manufacture responses. [Engine setup](docs/SETUP.md) explains speech, image and wake-word requirements.
+
+Windows assistant:
+
+```powershell
+dotnet run --project desktop\JarvisAI.csproj
 ```
 
----
+AuraScript, with Node.js 22+:
 
-## Phase status
+```powershell
+cd aurascript
+npm ci
+npm run prepare:editor
+npm start
+```
 
-| Phase | Feature                        | Status        |
-|-------|-------------------------------|---------------|
-| 1     | FastAPI server + WebSocket    | ✅ Done        |
-| 1     | LLM client (Groq/Gemini/Ollama)| ✅ Done        |
-| 1     | Orchestrator                  | ✅ Done        |
-| 1     | STT (Groq Whisper + local)    | ✅ Done        |
-| 1     | TTS (Coqui + gTTS fallback)   | ✅ Done        |
-| 2     | Tool system (7 tools)         | ✅ Done        |
-| 2     | RAG engine (ChromaDB)         | ✅ Done        |
-| 2     | Vision processor (LLaVA)      | ✅ Done        |
-| 2     | WPF UI skeleton + ViewModel   | ✅ Done        |
-| 2     | WebSocket C# client           | ✅ Done        |
-| 2     | Audio recording (NAudio)      | ✅ Done        |
-| 3     | Wake word ("Hey Jarvis")      | 🔲 TODO        |
-| 3     | Streaming token output        | 🔲 TODO        |
-| 3     | Interrupt handling            | 🔲 TODO        |
-| 3     | Reminder scheduler            | 🔲 TODO        |
-| 3     | Voice cloning (Coqui)         | 🔲 TODO        |
-| 3     | Memory dialog in UI           | 🔲 TODO        |
-| 4     | Installer / packaging         | 🔲 TODO        |
-| 4     | GitHub Actions CI             | 🔲 TODO        |
+The editor bundles Monaco and language workers from locked dependencies. File operations reject paths and links outside the selected project. Git actions require the repository root. Terminal commands execute only after explicit user submission in the local application. Selected code context is cleared when its selection closes or the workspace changes.
 
----
+## Capabilities and evidence
 
-## Get a Groq API key (free)
-https://console.groq.com/keys
+The [20-capability matrix](docs/CAPABILITIES.md) records implementation, acceptance evidence, provider requirements, and remaining live/device checks. See [architecture](docs/ARCHITECTURE.md), [realtime contract](docs/PROTOCOL.md), and [release validation](docs/RELEASE.md).
+
+Core automated acceptance covers owned persistence, conversation isolation, cancellation, ordered audio, source references, timezone conversion/DST gaps, selected-image cancellation, upload boundaries, real file saving, Python diagnostics, terminal processes, Git commits/diffs, workflows, exports, themes and mobile layouts. Provider contracts and ordered speech tests use explicit fixtures; live model inference, microphone hardware, optional ONNX/Whisper/Coqui engines and cross-platform installers require their own configured environments.
+
+## Release
+
+```powershell
+cd aurascript
+npm run build:win
+```
+
+The NSIS package is generated under `aurascript/dist`. [Package-Windows.ps1](scripts/Package-Windows.ps1) publishes a self-contained WPF client and a backend/source bundle with no real environment file, user data, model cache, or provider credentials. Windows packages are unsigned unless a signing identity is configured. macOS/Linux packaging is defined but has not been executed on this Windows host.
+
+Hosted browser demonstrations must use `DEMO_MODE=true`, HTTPS, an exact allowed origin, private storage and server-side provider credentials. Demo mode blocks local microphone listeners and host launches. The hosted browser has no Electron IPC bridge and cannot run terminal processes or read host files. [Container deployment](deploy/compose.yaml) provides a bounded local showcase service; private desktop operation remains the complete local workflow.
+
+The former scaffold installers now use maintained source and never overwrite the UI. Experimental legacy modules are not routed by the flagship service; old automatic screenshots, global histories and generated editor runtimes are superseded.

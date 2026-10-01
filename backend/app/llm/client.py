@@ -16,7 +16,8 @@ class LLMClient:
             system += '\n\n'.join(f'[{i+1}] {d.get("title", "Source")}\n{d["content"]}' for i,d in enumerate(documents))
         if tool_results:
             system += '\nTool result: ' + json.dumps(tool_results)
-        return [{'role':'system','content':system}] + [{'role':m['role'],'content':m['content']} for m in messages if m['role'] in ('user','assistant')][-40:]
+        history = [{'role':m['role'],'content':m['content']} for m in messages if m['role'] in ('user','assistant')]
+        return [{'role':'system','content':system}] + history[-self.settings.MAX_CONTEXT_MESSAGES:]
 
     async def stream_response(self, messages, rag_context=None, tool_results=None, system_prompt=None):
         s = self.settings
@@ -51,7 +52,7 @@ class LLMClient:
             elif s.LLM_PROVIDER == 'gemini':
                 if not s.GEMINI_API_KEY:
                     raise RuntimeError('Gemini API key is not configured')
-                payload = {'systemInstruction':{'parts':[{'text':messages[0]['content']}]},'contents':[{'role':'model' if m['role']=='assistant' else 'user','parts':[{'text':m['content']}]} for m in messages[1:]]}
+                payload = {'systemInstruction':{'parts':[{'text':messages[0]['content']}]},'contents':[{'role':'model' if m['role']=='assistant' else 'user','parts':[{'text':m['content']}]} for m in messages[1:]],'generationConfig':{'temperature':s.TEMPERATURE,'maxOutputTokens':s.MAX_TOKENS}}
                 async with client.stream('POST',f'https://generativelanguage.googleapis.com/v1beta/models/{s.LLM_MODEL}:streamGenerateContent',params={'alt':'sse'},headers={'x-goog-api-key':s.GEMINI_API_KEY},json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():

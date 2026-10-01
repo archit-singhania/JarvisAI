@@ -1,5 +1,8 @@
 import asyncio
 import base64
+import io
+import struct
+import wave
 import pytest
 from app.workspace import Workspace
 from app.runtime import Runtime
@@ -38,14 +41,23 @@ async def test_audio_order_contract_and_citations(tmp_path,monkeypatch):
         yield ' Two.'
     async def synthesize(self,text):
         await asyncio.sleep(.01 if text=='One.' else 0)
-        return {'success':True,'audio_data':text.encode(),'format':'mp3'}
+        output=io.BytesIO()
+        with wave.open(output,'wb') as fixture:
+            fixture.setnchannels(1);fixture.setsampwidth(2);fixture.setframerate(24000)
+            fixture.writeframes(struct.pack('<h',1000 if text=='One.' else 2000)*240)
+        return {'success':True,'audio_data':output.getvalue(),'format':'wav'}
     monkeypatch.setattr(LLMClient,'stream_response',stream);monkeypatch.setattr(SpeechProcessor,'synthesize',synthesize)
     store=Workspace(tmp_path/'work.db');owner,_=store.create_owner();conversation=store.conversation(owner)
     store.save_record(owner,'document','One source','One reference with actual evidence.')
     socket=Socket();runtime=Runtime(socket,store,owner,conversation['id'])
     await runtime.start(text='One reference',speak=True);await runtime.task
     audio=[e for e in socket.events if e['type']=='audio_chunk']
-    assert [base64.b64decode(e['audio_b64']).decode() for e in audio]==['One.',' Two.']
+    def first_sample(event):
+        assert event['audio_format']=='wav'
+        with wave.open(io.BytesIO(base64.b64decode(event['audio_b64'])),'rb') as decoded:
+            assert decoded.getframerate()==24000 and decoded.getnframes()==240
+            return struct.unpack('<h',decoded.readframes(1))[0]
+    assert [first_sample(e) for e in audio]==[1000,2000]
     assert [e['audio_sequence'] for e in audio]==[0,1]
     assert len({e['turn_id'] for e in socket.events})==1
     assert socket.events[-1]['type']=='stream_end'

@@ -1,0 +1,44 @@
+name: Flagship acceptance
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r backend/requirements-core.txt
+      - run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: aurascript/package-lock.json}
+      - run: npm ci && npm run prepare:editor && npm test
+        working-directory: aurascript
+      - run: npx playwright install --with-deps chromium
+        working-directory: aurascript
+      - run: python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8006 > /tmp/wednesday.log 2>&1 &
+        env: {WEDNESDAY_DATA_DIR: /tmp/wednesday-acceptance, ALLOWED_ORIGINS: 'http://127.0.0.1:8006,aura://app'}
+      - run: node tests/browser-smoke.cjs
+        working-directory: aurascript
+        env: {PLAYWRIGHT_CHANNEL: chromium}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: browser-evidence, path: test-results}
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: {dotnet-version: '10.0.x'}
+      - run: dotnet build desktop/JarvisAI.csproj -c Release
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: aurascript/package-lock.json}
+      - run: npm ci
+        working-directory: aurascript
+      - run: node node_modules/electron/install.js
+        working-directory: aurascript
+      - run: npm run prepare:editor
+        working-directory: aurascript
+      - run: npm run build:win
+        working-directory: aurascript
+      - uses: actions/upload-artifact@v4
+        with: {name: aurascript-windows, path: 'aurascript/dist/*.exe'}

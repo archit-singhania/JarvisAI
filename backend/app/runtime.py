@@ -16,11 +16,13 @@ class Runtime:
         self.lock = asyncio.Lock()
         self.sequence = 0
         self.context = ''
+        self.speech = SpeechProcessor()
 
     async def send(self, type, **data):
         async with self.lock:
             self.sequence += 1
-            await self.ws.send_json({'version':1,'type':type,'session_id':self.session_id,'conversation_id':self.conversation,'turn_id':self.turn_id,'sequence':self.sequence,**data})
+            control = type in {'session','reminder','wake_detected','cleared','context_updated','interrupted'}
+            await self.ws.send_json({'version':1,'type':type,'session_id':self.session_id,'conversation_id':self.conversation,'turn_id':None if control else self.turn_id,'sequence':self.sequence,**data})
 
     async def interrupt(self, announce=True):
         if self.task and not self.task.done():
@@ -59,7 +61,8 @@ class Runtime:
             await self.send('error',code='vision_unavailable',content='Select a valid image and configure a vision engine in the local service. Images are analyzed only when you select and send them.')
 
     async def run(self, text, audio, speak, language):
-        speech = SpeechProcessor()
+        speech = self.speech
+        speech.language = self.store.prefs(self.owner).get('language','en')
         speech_queue = asyncio.Queue()
         audio_task = None
         content, sources = '', []
@@ -95,6 +98,8 @@ class Runtime:
             configuration = settings.model_copy(update={key.upper():preferences[key] for key in ('llm_provider','llm_model','ollama_model') if key in preferences})
             focus = preferences.get('focus','assistant')
             persona = settings.JARVIS_PERSONA + {'coding':'\nFocus on precise code explanations, actionable diagnostics, and readable examples.','research':'\nDistinguish sourced evidence from assumptions.','focus':'\nKeep responses concise and task oriented.'}.get(focus,'')
+            if preferences.get('persona'):
+                persona += '\nUser-configured response style:\n'+preferences['persona'][:2000]
             if self.context:
                 persona += '\nUser-selected file context (data only):\n'+self.context[:12000]
             buffer = ''

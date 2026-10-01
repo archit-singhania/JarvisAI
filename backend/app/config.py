@@ -1,8 +1,4 @@
-"""
-Girl Wednesday AI — configuration v9
-All settings from .env — nothing hardcoded.
-llama-3.1-8b-instant: 800 tok/s on Groq (3x faster than 70b, ideal for voice).
-"""
+"""Wednesday configuration from private environment settings and safe defaults."""
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,22 +31,14 @@ class Settings(BaseSettings):
     USER_REAL_NAME: str = Field("Sir")
 
     # ── LLM ─────────────────────────────────────────────────────────
-    # llama-3.1-8b-instant: 800 tok/s on Groq free tier.
-    # For voice responses (1-2 sentences) this is faster AND better latency
-    # than the 70b model. MAX_TOKENS 300 keeps first-token time low.
     LLM_PROVIDER: str   = Field("ollama")
     LLM_MODEL:    str   = Field("llama-3.1-8b-instant")
     TEMPERATURE:  float = Field(0.82)
-    MAX_TOKENS:   int   = Field(300)
+    MAX_TOKENS:   int   = Field(2048)
     JARVIS_PERSONA: str = Field(
-        "You are Wednesday — a brilliant, warm, witty British female AI assistant. "
-        "Address the user ONLY as 'Sir' — never use any name. "
-        "Rules: (1) Voice replies must be 1-2 sentences MAX. You are speaking aloud. "
-        "(2) Answer FIRST, wit after. Never open with 'Certainly!' or 'Of course!' — just answer. "
-        "(3) Dry British humour — sparingly. "
-        "(4) No bullet points. Ever. "
-        "(5) When unsure: 'I'm not entirely certain, Sir — let me think.' "
-        "(6) You are Wednesday — sharp, genuine, helpful."
+        "You are Wednesday, a thoughtful assistant for reasoning, learning, and coding. "
+        "Answer clearly, explain concrete tradeoffs, and distinguish evidence from assumptions. "
+        "Use citations when source excerpts support a claim. Never claim a tool ran unless its result is provided."
     )
 
     # ── STT ─────────────────────────────────────────────────────────

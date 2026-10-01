@@ -14,6 +14,7 @@ public sealed class AudioService : IDisposable
     public event Action<float>? OnRmsLevel;
     public event Action<string>? OnError;
     public bool IsRecording => input is not null;
+    private bool disposed;
     public AudioService(){_=PlayLoop(queue,playback.Token);}
 
     public void StartRecording()
@@ -43,6 +44,7 @@ public sealed class AudioService : IDisposable
     }
 
     public void EnqueueAudio(byte[] bytes,string format)=>queue.Writer.TryWrite((bytes,format));
+    public static WaveStream Decode(Stream stream,string format)=>format switch{"wav"=>new WaveFileReader(stream),"mp3"=>new Mp3FileReader(stream),_=>throw new InvalidDataException("Unsupported speech audio format.")};
     public void StopPlayback()
     {
         playback.Cancel();playback.Dispose();playback=new();queue.Writer.TryComplete();queue=Channel.CreateUnbounded<(byte[],string)>();_=PlayLoop(queue,playback.Token);
@@ -57,7 +59,7 @@ public sealed class AudioService : IDisposable
                 try
                 {
                     using var stream=new MemoryStream(item.Bytes);
-                    using WaveStream reader=item.Format=="wav"?new WaveFileReader(stream):new Mp3FileReader(stream);
+                    using WaveStream reader=Decode(stream,item.Format);
                     using var output=new WaveOutEvent();output.Init(reader);output.Play();
                     try{while(output.PlaybackState==PlaybackState.Playing)await Task.Delay(20,cancellation);}
                     finally{output.Stop();}
@@ -68,5 +70,5 @@ public sealed class AudioService : IDisposable
         catch(OperationCanceledException){}
     }
 
-    public void Dispose(){playback.Cancel();input?.Dispose();writer?.Dispose();buffer?.Dispose();}
+    public void Dispose(){if(disposed)return;disposed=true;playback.Cancel();queue.Writer.TryComplete();input?.Dispose();writer?.Dispose();buffer?.Dispose();playback.Dispose();}
 }

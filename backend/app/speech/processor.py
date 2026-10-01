@@ -1,7 +1,6 @@
-"""
-Speech Processor — reads settings live on every call, no caching of voice IDs.
-This means changing ELEVENLABS_VOICE_ID in .env + calling /api/config/reload
-takes effect immediately without a server restart.
+"""Explicit speech adapters with format detection and reusable local models.
+
+Restart the maintained service after changing its private environment settings.
 """
 import asyncio
 import io
@@ -61,8 +60,8 @@ class SpeechProcessor:
         self._coqui_model = None
         self._whisper_model = None
         self._model_lock = threading.Lock()
-        # NOTE: we do NOT cache settings fields here — always read from settings at call time
-        # so that /api/config/reload takes effect without restart
+        # Provider settings come from the configured service, rather than a
+        # silent fallback. Expensive local models are reused within this client.
         from app.config import settings as s
         logger.info(f"SpeechProcessor ready | TTS: {s.TTS_PROVIDER} | "
                     f"EL voice: {s.ELEVENLABS_VOICE_ID if s.has_elevenlabs() else 'not configured'}")
@@ -253,7 +252,7 @@ class SpeechProcessor:
 
     async def _gtts(self, text: str) -> dict:
         from gtts import gTTS
-        tts = gTTS(text=text, lang="en", slow=False)
+        tts = gTTS(text=text, lang=getattr(self,'language','en'), slow=False)
         buf = io.BytesIO()
         await asyncio.to_thread(tts.write_to_fp,buf)
         buf.seek(0)

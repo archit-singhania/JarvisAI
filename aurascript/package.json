@@ -17,11 +17,13 @@
     "build:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "monaco-editor": "0.56.0"
+    "monaco-editor": "0.57.0"
   },
   "devDependencies": {
-    "electron": "^44.5.1",
-    "electron-builder": "^26.0.12"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1"
   },
   "build": {
     "appId": "com.architsinghania.aurascript",
@@ -46,5 +48,8 @@
       "target": "AppImage",
       "icon": "assets/icon.png"
     }
+  },
+  "overrides": {
+    "dompurify": "3.4.16"
   }
 }

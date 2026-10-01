@@ -8,18 +8,22 @@ import json
 import logging
 import os
 import platform
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.workspace import Workspace
 from app.runtime import Runtime
@@ -30,6 +34,7 @@ store = Workspace(Path(os.environ.get('WEDNESDAY_DATA_DIR', str(settings.DATA_DI
 runtimes = set()
 origins = {x.strip() for x in settings.ALLOWED_ORIGINS.split(',') if x.strip()}
 wake_listener = None
+wake_owner = None
 
 
 def token_from(request):
@@ -73,15 +78,19 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Wednesday / AuraScript',version='1.0.0',lifespan=lifespan)
-app.add_middleware(CORSMiddleware,allow_origins=list(origins),allow_credentials=True,allow_methods=['GET','POST','PATCH','DELETE'],allow_headers=['Authorization','Content-Type','X-Requested-With'])
+app.add_middleware(CORSMiddleware,allow_origins=list(origins),allow_credentials=True,allow_methods=['GET','POST','PATCH','DELETE'],allow_headers=['Authorization','Content-Type','X-Requested-With','X-Request-ID'],expose_headers=['X-Request-ID'])
 
 
 @app.middleware('http')
 async def protect_browser(request, call_next):
+    supplied_id = request.headers.get('x-request-id','')
+    request.state.request_id = supplied_id if re.fullmatch(r'[A-Za-z0-9_-]{1,80}',supplied_id) else uuid4().hex
     origin = request.headers.get('origin')
     if request.method not in ('GET','HEAD','OPTIONS') and origin and origin not in origins:
-        return JSONResponse(status_code=403,content={'detail':'Origin is not allowed'})
-    response = await call_next(request)
+        response = error_response(request,403,'Origin is not allowed','origin_not_allowed')
+    else:
+        response = await call_next(request)
+    response.headers['X-Request-ID'] = request.state.request_id
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'same-origin'
     if request.url.path.startswith('/api/'):
@@ -89,9 +98,24 @@ async def protect_browser(request, call_next):
     return response
 
 
+def error_response(request,status,message,code,headers=None):
+    return JSONResponse(status_code=status,content={'detail':message,'error':{'code':code,'message':message,'request_id':getattr(request.state,'request_id',None)}},headers=headers)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request,error):
+    return error_response(request,error.status_code,error.detail,f'http_{error.status_code}',error.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request,error):
+    fields = [str(part) for finding in error.errors() for part in finding['loc'] if part not in ('body','query','path')]
+    return error_response(request,422,'Check the supplied fields: '+', '.join(dict.fromkeys(fields)),'invalid_request')
+
+
 @app.exception_handler(KeyError)
 async def not_found(request, error):
-    return JSONResponse(status_code=404,content={'detail':'Owned resource not found'})
+    return error_response(request,404,'Owned resource not found','resource_not_found')
 
 
 @app.get('/')
@@ -147,7 +171,9 @@ class Preferences(BaseModel):
     reduce_motion: bool | None = None
     reduce_transparency: bool | None = None
     focus: Literal['assistant','coding','research','focus'] | None = None
+    persona: str | None = Field(default=None,max_length=2000)
     language: str | None = Field(default=None,max_length=20)
+    timezone: str | None = Field(default=None,max_length=100)
     tts: bool | None = None
     llm_provider: Literal['ollama','groq','openai','gemini'] | None = None
     llm_model: str | None = Field(default=None,max_length=100)
@@ -161,6 +187,11 @@ def get_preferences(identity=Depends(owner)):
 
 @app.patch('/api/preferences')
 def preferences(body: Preferences,identity=Depends(owner)):
+    if body.timezone:
+        try:
+            ZoneInfo(body.timezone)
+        except ZoneInfoNotFoundError:
+            raise HTTPException(422,'Choose a valid IANA timezone, such as Asia/Kolkata or Europe/London')
     return store.prefs(identity,body.model_dump(exclude_none=True))
 
 
@@ -276,7 +307,8 @@ async def capabilities(identity=Depends(owner)):
             models = [m['name'] for m in response.json().get('models',[])]
     except Exception:
         local_error = 'Ollama is not reachable. Install/start Ollama and download a model.'
-    return {'llm':{'ollama':{'available':bool(models),'models':models,'detail':local_error},'groq':{'available':settings.has_groq()},'openai':{'available':bool(settings.OPENAI_API_KEY)},'gemini':{'available':bool(settings.GEMINI_API_KEY)}},'speech':{'server_tts':settings.TTS_PROVIDER!='none','provider':settings.TTS_PROVIDER,'local_stt':importlib.util.find_spec('whisper') is not None,'groq_stt':settings.has_groq()},'vision':{'local_models':[m for m in models if any(k in m for k in ('llava','vision','gemma3'))],'openai':bool(settings.OPENAI_API_KEY)},'wake_word':{'available':not settings.DEMO_MODE and importlib.util.find_spec('openwakeword') is not None and importlib.util.find_spec('pyaudio') is not None},'host_tools':not settings.DEMO_MODE,'retrieval':'local lexical source retrieval'}
+    wake_available = not settings.DEMO_MODE and importlib.util.find_spec('openwakeword') is not None and importlib.util.find_spec('pyaudio') is not None and (settings.MODELS_DIR/'wakeword'/'hey_jarvis.onnx').is_file()
+    return {'llm':{'ollama':{'available':bool(models),'models':models,'detail':local_error},'groq':{'available':settings.has_groq()},'openai':{'available':bool(settings.OPENAI_API_KEY)},'gemini':{'available':bool(settings.GEMINI_API_KEY)}},'speech':{'server_tts':settings.TTS_PROVIDER!='none','provider':settings.TTS_PROVIDER,'local_stt':importlib.util.find_spec('whisper') is not None,'groq_stt':settings.has_groq()},'vision':{'local_models':[m for m in models if any(k in m for k in ('llava','vision','gemma3'))],'openai':bool(settings.OPENAI_API_KEY)},'wake_word':{'available':wake_available,'active':wake_listener is not None and wake_owner==identity},'host_tools':not settings.DEMO_MODE,'retrieval':'local lexical source retrieval'}
 
 
 class CodeInput(BaseModel):
@@ -377,13 +409,16 @@ async def run_workflow(workflow_id: str,identity=Depends(owner)):
 
 @app.post('/api/wake-word/{action}')
 async def wake_word(action: Literal['start','stop'],identity=Depends(owner)):
-    global wake_listener
+    global wake_listener,wake_owner
     if settings.DEMO_MODE:
         raise HTTPException(403,'Local microphone access disabled in demo mode')
     if action == 'stop':
+        if wake_listener and wake_owner!=identity:
+            raise HTTPException(403,'The local listener belongs to another workspace')
         if wake_listener:
             wake_listener.stop()
         wake_listener = None
+        wake_owner = None
         return {'active':False}
     if importlib.util.find_spec('openwakeword') is None or importlib.util.find_spec('pyaudio') is None:
         raise HTTPException(503,'Install the optional wake-word dependencies and model first')
@@ -397,10 +432,12 @@ async def wake_word(action: Literal['start','stop'],identity=Depends(owner)):
                 await runtime.interrupt()
                 await runtime.send('wake_detected')
     wake_listener = WakeWordListener(lambda:loop.call_soon_threadsafe(lambda:loop.create_task(notify())))
+    wake_owner = identity
     try:
         await asyncio.to_thread(wake_listener.start)
     except Exception as error:
         wake_listener = None
+        wake_owner = None
         raise HTTPException(503,'Wake-word model or microphone could not start. Install its ONNX model and allow microphone access.') from error
     return {'active':True,'detail':'Local wake-word model and microphone are active'}
 
@@ -452,10 +489,12 @@ async def socket(ws: WebSocket):
                     await runtime.send('error',code='invalid_audio',content='Upload valid audio under 10 MB')
             elif kind == 'clear':
                 await runtime.interrupt(False)
+                runtime.context = ''
                 runtime.conversation = store.conversation(identity)['id']
                 await runtime.send('cleared')
             elif kind == 'code_context':
-                runtime.context = f"File: {str(data.get('file',''))[:200]}\n{str(data.get('content',''))[:12000]}"
+                selected_content = str(data.get('content',''))[:12000]
+                runtime.context = f"File: {str(data.get('file',''))[:200]}\n{selected_content}" if selected_content.strip() else ''
                 await runtime.send('context_updated')
             elif kind == 'reminder_ack':
                 store.acknowledge_reminder(identity,str(data.get('reminder_id','')))

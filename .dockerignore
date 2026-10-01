@@ -1,0 +1,14 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+backend/.env
+data
+logs
+models
+test-results
+release
+desktop/bin
+desktop/obj
+aurascript/node_modules
+aurascript/dist

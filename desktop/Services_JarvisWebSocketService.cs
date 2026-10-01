@@ -9,6 +9,7 @@ public sealed class JarvisWebSocketService : IDisposable
     private ClientWebSocket? socket;
     private CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim sends = new(1,1);
+    private bool disposed;
     public event Action<JsonElement>? MessageReceived;
     public event Action<bool>? OnConnectionChanged;
     public bool IsConnected => socket?.State == WebSocketState.Open;
@@ -58,5 +59,5 @@ public sealed class JarvisWebSocketService : IDisposable
         finally{if(ReferenceEquals(socket,connection))OnConnectionChanged?.Invoke(false);}
     }
 
-    public void Dispose(){lifetime.Cancel();socket?.Dispose();lifetime.Dispose();}
+    public void Dispose(){if(disposed)return;disposed=true;lifetime.Cancel();socket?.Dispose();lifetime.Dispose();}
 }

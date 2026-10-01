@@ -1,0 +1,23 @@
+services:
+  wednesday:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      DEMO_MODE: "true"
+      DEBUG: "false"
+      ALLOWED_ORIGINS: ${WEDNESDAY_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      TTS_PROVIDER: none
+    volumes: ["workspace:/data"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp","/app/logs","/app/models"]
+    mem_limit: 1g
+    cpus: 2
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  workspace:
