@@ -5,40 +5,43 @@ llama-3.1-8b-instant: 800 tok/s on Groq (3x faster than 70b, ideal for voice).
 """
 from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=str(PROJECT_ROOT / 'backend' / '.env'), extra='ignore', case_sensitive=True)
+    DEMO_MODE: bool = False
+    ALLOWED_ORIGINS: str = 'http://localhost:8000,http://127.0.0.1:8000,aura://app'
 
     # ── API Keys ────────────────────────────────────────────────────
-    GROQ_API_KEY:       Optional[str] = Field(None, env="GROQ_API_KEY")
-    OPENAI_API_KEY:     Optional[str] = Field(None, env="OPENAI_API_KEY")
-    GEMINI_API_KEY:     Optional[str] = Field(None, env="GEMINI_API_KEY")
-    ANTHROPIC_API_KEY:  Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
-    ELEVENLABS_API_KEY: Optional[str] = Field(None, env="ELEVENLABS_API_KEY")
+    GROQ_API_KEY:       Optional[str] = Field(None)
+    OPENAI_API_KEY:     Optional[str] = Field(None)
+    GEMINI_API_KEY:     Optional[str] = Field(None)
+    ANTHROPIC_API_KEY:  Optional[str] = Field(None)
+    ELEVENLABS_API_KEY: Optional[str] = Field(None)
 
     # ── Server ──────────────────────────────────────────────────────
-    HOST:  str  = Field("0.0.0.0", env="HOST")
-    PORT:  int  = Field(8000,      env="PORT")
-    DEBUG: bool = Field(True,      env="DEBUG")
+    HOST:  str  = Field("127.0.0.1")
+    PORT:  int  = Field(8000)
+    DEBUG: bool = Field(True)
 
     # ── User identity ────────────────────────────────────────────────
     # USER_NAME is the address ("Sir").
     # USER_REAL_NAME is kept only for logging — never spoken aloud.
-    USER_NAME:      str = Field("Sir", env="USER_NAME")
-    USER_REAL_NAME: str = Field("Sir", env="USER_REAL_NAME")
+    USER_NAME:      str = Field("Sir")
+    USER_REAL_NAME: str = Field("Sir")
 
     # ── LLM ─────────────────────────────────────────────────────────
     # llama-3.1-8b-instant: 800 tok/s on Groq free tier.
     # For voice responses (1-2 sentences) this is faster AND better latency
     # than the 70b model. MAX_TOKENS 300 keeps first-token time low.
-    LLM_PROVIDER: str   = Field("groq",                  env="LLM_PROVIDER")
-    LLM_MODEL:    str   = Field("llama-3.1-8b-instant",  env="LLM_MODEL")
-    TEMPERATURE:  float = Field(0.82, env="TEMPERATURE")
-    MAX_TOKENS:   int   = Field(300,  env="MAX_TOKENS")
+    LLM_PROVIDER: str   = Field("ollama")
+    LLM_MODEL:    str   = Field("llama-3.1-8b-instant")
+    TEMPERATURE:  float = Field(0.82)
+    MAX_TOKENS:   int   = Field(300)
     JARVIS_PERSONA: str = Field(
         "You are Wednesday — a brilliant, warm, witty British female AI assistant. "
         "Address the user ONLY as 'Sir' — never use any name. "
@@ -47,38 +50,37 @@ class Settings(BaseSettings):
         "(3) Dry British humour — sparingly. "
         "(4) No bullet points. Ever. "
         "(5) When unsure: 'I'm not entirely certain, Sir — let me think.' "
-        "(6) You are Wednesday — sharp, genuine, helpful.",
-        env="JARVIS_PERSONA"
+        "(6) You are Wednesday — sharp, genuine, helpful."
     )
 
     # ── STT ─────────────────────────────────────────────────────────
-    STT_PROVIDER:        str = Field("groq",                   env="STT_PROVIDER")
-    WHISPER_MODEL:       str = Field("whisper-large-v3-turbo", env="WHISPER_MODEL")
-    LOCAL_WHISPER_MODEL: str = Field("base",                   env="LOCAL_WHISPER_MODEL")
+    STT_PROVIDER:        str = Field("groq")
+    WHISPER_MODEL:       str = Field("whisper-large-v3-turbo")
+    LOCAL_WHISPER_MODEL: str = Field("base")
 
     # ── TTS ─────────────────────────────────────────────────────────
-    TTS_PROVIDER: str = Field("elevenlabs", env="TTS_PROVIDER")
+    TTS_PROVIDER: str = Field("none")
 
-    ELEVENLABS_VOICE_ID:      str   = Field("21m00Tcm4TlvDq8ikWAM", env="ELEVENLABS_VOICE_ID")
-    ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5",    env="ELEVENLABS_MODEL_ID")
-    ELEVENLABS_STABILITY:     float = Field(0.40, env="ELEVENLABS_STABILITY")
-    ELEVENLABS_SIMILARITY:    float = Field(0.85, env="ELEVENLABS_SIMILARITY")
-    ELEVENLABS_STYLE:         float = Field(0.25, env="ELEVENLABS_STYLE")
-    ELEVENLABS_SPEAKER_BOOST: bool  = Field(True, env="ELEVENLABS_SPEAKER_BOOST")
+    ELEVENLABS_VOICE_ID:      str   = Field("21m00Tcm4TlvDq8ikWAM")
+    ELEVENLABS_MODEL_ID:      str   = Field("eleven_turbo_v2_5")
+    ELEVENLABS_STABILITY:     float = Field(0.40)
+    ELEVENLABS_SIMILARITY:    float = Field(0.85)
+    ELEVENLABS_STYLE:         float = Field(0.25)
+    ELEVENLABS_SPEAKER_BOOST: bool  = Field(True)
 
-    EDGE_TTS_VOICE:  str = Field("en-GB-SoniaNeural", env="EDGE_TTS_VOICE")
-    EDGE_TTS_RATE:   str = Field("+5%",  env="EDGE_TTS_RATE")
-    EDGE_TTS_VOLUME: str = Field("+0%",  env="EDGE_TTS_VOLUME")
-    EDGE_TTS_PITCH:  str = Field("+0Hz", env="EDGE_TTS_PITCH")
+    EDGE_TTS_VOICE:  str = Field("en-GB-SoniaNeural")
+    EDGE_TTS_RATE:   str = Field("+5%")
+    EDGE_TTS_VOLUME: str = Field("+0%")
+    EDGE_TTS_PITCH:  str = Field("+0Hz")
 
     # ── Vision ──────────────────────────────────────────────────────
-    VISION_PROVIDER: str = Field("ollama",      env="VISION_PROVIDER")
-    VISION_MODEL:    str = Field("gpt-4o-mini", env="VISION_MODEL")
+    VISION_PROVIDER: str = Field("ollama")
+    VISION_MODEL:    str = Field("gpt-4o-mini")
 
     # ── Ollama ──────────────────────────────────────────────────────
-    OLLAMA_HOST:         str = Field("http://localhost:11434", env="OLLAMA_HOST")
-    OLLAMA_MODEL:        str = Field("llama3.1:8b",            env="OLLAMA_MODEL")
-    OLLAMA_VISION_MODEL: str = Field("llava:13b",              env="OLLAMA_VISION_MODEL")
+    OLLAMA_HOST:         str = Field("http://localhost:11434")
+    OLLAMA_MODEL:        str = Field("llama3.1:8b")
+    OLLAMA_VISION_MODEL: str = Field("llava:13b")
 
     # ── Paths ───────────────────────────────────────────────────────
     MODELS_DIR:      Path = PROJECT_ROOT / "models"
@@ -87,38 +89,34 @@ class Settings(BaseSettings):
     PIPER_MODEL_DIR: Path = PROJECT_ROOT / "models" / "piper"
 
     # ── Audio ───────────────────────────────────────────────────────
-    SAMPLE_RATE: int = Field(16000, env="SAMPLE_RATE")
-    CHANNELS:    int = Field(1,     env="CHANNELS")
-    CHUNK_SIZE:  int = Field(1024,  env="CHUNK_SIZE")
+    SAMPLE_RATE: int = Field(16000)
+    CHANNELS:    int = Field(1)
+    CHUNK_SIZE:  int = Field(1024)
 
     # ── Location ─────────────────────────────────────────────────────
-    LOCATION_LAT:  float = Field(28.6139, env="LOCATION_LAT")
-    LOCATION_LON:  float = Field(77.2090, env="LOCATION_LON")
-    LOCATION_NAME: str   = Field("Delhi", env="LOCATION_NAME")
+    LOCATION_LAT:  float = Field(28.6139)
+    LOCATION_LON:  float = Field(77.2090)
+    LOCATION_NAME: str   = Field("Delhi")
 
     # ── RAG ─────────────────────────────────────────────────────────
     VECTOR_DB_PATH:  Path  = PROJECT_ROOT / "data" / "vectordb"
-    CHUNK_SIZE_RAG:  int   = Field(1000,               env="CHUNK_SIZE_RAG")
-    CHUNK_OVERLAP:   int   = Field(200,                env="CHUNK_OVERLAP")
-    EMBEDDING_MODEL: str   = Field("all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
+    CHUNK_SIZE_RAG:  int   = Field(1000)
+    CHUNK_OVERLAP:   int   = Field(200)
+    EMBEDDING_MODEL: str   = Field("all-MiniLM-L6-v2")
 
     # ── Wake word ────────────────────────────────────────────────────
-    WAKE_WORD:             str   = Field("jarvis", env="WAKE_WORD")
-    WAKE_WORD_ENABLED:     bool  = Field(True,     env="WAKE_WORD_ENABLED")
-    WAKE_WORD_SENSITIVITY: float = Field(0.5,      env="WAKE_WORD_SENSITIVITY")
+    WAKE_WORD:             str   = Field("jarvis")
+    WAKE_WORD_ENABLED:     bool  = Field(False)
+    WAKE_WORD_SENSITIVITY: float = Field(0.5)
 
     # ── Code watcher ─────────────────────────────────────────────────
-    CODE_WATCH_ENABLED:  bool = Field(True,          env="CODE_WATCH_ENABLED")
-    CODE_WATCH_PATH:     str  = Field("~/Documents", env="CODE_WATCH_PATH")
-    CODE_WATCH_INTERVAL: int  = Field(5,             env="CODE_WATCH_INTERVAL")
+    CODE_WATCH_ENABLED:  bool = Field(False)
+    CODE_WATCH_PATH:     str  = Field("~/Documents")
+    CODE_WATCH_INTERVAL: int  = Field(5)
 
     # ── Streaming ───────────────────────────────────────────────────
-    STREAM_RESPONSES:     bool = Field(True, env="STREAM_RESPONSES")
-    MAX_CONTEXT_MESSAGES: int  = Field(20,   env="MAX_CONTEXT_MESSAGES")
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    STREAM_RESPONSES:     bool = Field(True)
+    MAX_CONTEXT_MESSAGES: int  = Field(20)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

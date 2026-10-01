@@ -1,17 +1,12 @@
-using System.Windows.Media;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace JarvisAI.Models;
-
-/// <summary>A single chat message shown in the UI.</summary>
-public class ChatMessage
+public partial class ChatMessage : ObservableObject
 {
-    public string Sender    { get; set; } = "";
-    public string Content   { get; set; } = "";
-    public string Timestamp { get; set; } = DateTime.Now.ToString("HH:mm");
-    public bool   IsUser    { get; set; }
-
-    public string Alignment   => IsUser ? "Right" : "Left";
-    public Color  BubbleColor => IsUser
-        ? Color.FromRgb(0x1C, 0x3A, 0x6E)
-        : Color.FromRgb(0x0E, 0x2A, 0x38);
+    [ObservableProperty] private string content="";
+    public string Sender{get;set;}="Wednesday";
+    public bool IsUser{get;set;}
+    public string Timestamp{get;set;}=DateTime.Now.ToString("HH:mm");
 }
+
+public sealed record WorkspaceItem(string Id,string Title,string Content);

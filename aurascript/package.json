@@ -1,0 +1,50 @@
+{
+  "name": "aurascript",
+  "version": "2.0.0",
+  "private": true,
+  "description": "A considered coding workspace with Wednesday intelligence.",
+  "main": "src/main.cjs",
+  "author": "Archit Singhania",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test tests/*.test.cjs",
+    "prepare:editor": "node scripts/bundle-editor.cjs",
+    "postinstall": "node scripts/bundle-editor.cjs",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "monaco-editor": "0.56.0"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.architsinghania.aurascript",
+    "productName": "AuraScript",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    }
+  }
+}

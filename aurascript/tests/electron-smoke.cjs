@@ -1,0 +1,46 @@
+'use strict';
+const {_electron:electron}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const path=require('node:path'),fs=require('node:fs/promises'),os=require('node:os'),assert=require('node:assert/strict'),{execFileSync}=require('node:child_process');
+let runningApp;
+(async()=>{
+  const fixture=await fs.mkdtemp(path.join(os.tmpdir(),'aurascript-smoke-'));
+  await fs.writeFile(path.join(fixture,'acceptance.py'),'print("original")\n');
+  execFileSync('git',['init',fixture],{windowsHide:true});
+  execFileSync('git',['-C',fixture,'config','user.name','Acceptance Fixture'],{windowsHide:true});
+  execFileSync('git',['-C',fixture,'config','user.email','fixture@example.invalid'],{windowsHide:true});
+  const output=path.resolve(__dirname,'../../test-results/electron');await fs.mkdir(output,{recursive:true});
+  const app=await electron.launch({executablePath:path.resolve(__dirname,'../node_modules/electron/dist/electron.exe'),args:[path.resolve(__dirname,'..')],env:{...process.env,AURA_HEADLESS:'1',AURA_TEST_DATA:path.join(fixture,'app-state'),WEDNESDAY_URL:process.env.WEDNESDAY_URL||'http://127.0.0.1:8006'}});
+  runningApp=app;
+  const page=await app.firstWindow(),errors=[];page.on('pageerror',error=>{errors.push(error.message);console.error('Renderer error:',error.message);});page.on('console',message=>{if(message.type()==='error')console.error('Renderer console:',message.text());});
+  await page.locator('#assistant-status').filter({hasText:'Workspace connected'}).waitFor({timeout:30000});
+  await page.waitForFunction(()=>typeof monaco!=='undefined'&&!!document.querySelector('.monaco-editor'),{timeout:30000});
+  // Native chooser is stubbed only in this isolated test process. Real IPC,
+  // filesystem boundaries, Monaco, saving, terminal and Git still execute.
+  await app.evaluate(({dialog},fixture)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[fixture]});},fixture);
+  await page.locator('#open-folder').click();await page.getByRole('button',{name:'· acceptance.py',exact:true}).click();
+  await page.waitForFunction(()=>monaco.editor.getModels().some(m=>m.getValue().includes('original')));
+  await page.evaluate(()=>monaco.editor.getModels().find(m=>m.uri.path.endsWith('acceptance.py')).setValue('print("persisted")\n'));
+  await page.keyboard.press('Control+s');
+  await page.locator('#file-status').filter({hasText:'Saved · acceptance.py'}).waitFor();
+  assert.equal(await fs.readFile(path.join(fixture,'acceptance.py'),'utf8'),'print("persisted")\n');
+  await page.evaluate(()=>monaco.editor.getModels().find(m=>m.uri.path.endsWith('acceptance.py')).setValue('def broken(:\n'));
+  await page.locator('#diagnostic-status').filter({hasText:'1 diagnostic'}).waitFor();
+  await page.evaluate(()=>monaco.editor.getModels().find(m=>m.uri.path.endsWith('acceptance.py')).setValue('print("persisted")\n'));
+  await page.keyboard.press('Control+s');
+  await page.locator('#terminal-input').fill('git --version');await page.locator('#terminal-form button').click();
+  await page.locator('#terminal-output').filter({hasText:'Process exited · 0'}).waitFor();
+  await page.locator('#checkpoint').click();await page.locator('[name=message]').fill('Actual acceptance checkpoint');await page.locator('#dialog-submit').click();
+  await page.getByText('Checkpoint saved.',{exact:true}).waitFor();
+  assert(execFileSync('git',['-C',fixture,'log','-1','--format=%s'],{encoding:'utf8',windowsHide:true}).includes('Actual acceptance checkpoint'));
+  await page.locator('#git-history').click();await page.getByRole('button',{name:/Actual acceptance checkpoint ·/}).click();
+  await page.getByRole('heading',{name:'Checkpoint changes',exact:true}).waitFor();await page.locator('#dialog-close').click();
+  await page.locator('#palette-open').click();await page.locator('[name=search]').fill('preferences');await page.getByRole('button',{name:'Preferences',exact:true}).click();
+  await page.locator('[name=theme]').selectOption('light');await page.locator('#dialog-submit').click();
+  await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+  await page.screenshot({path:path.join(output,'aurascript-desktop-light.png'),fullPage:true});
+  await page.locator('#preferences').click();await page.locator('[name=theme]').selectOption('dark');await page.locator('#dialog-submit').click();
+  await page.screenshot({path:path.join(output,'aurascript-desktop-dark.png'),fullPage:true});
+  assert.deepEqual(errors,[]);
+  await fs.writeFile(path.join(output,'acceptance.json'),JSON.stringify({passed:true,checks:['isolated native chooser','actual IPC boundary','offline Monaco','file save','Python syntax diagnostics','terminal streaming','real Git checkpoint and diff','command palette','themes'],pageErrors:errors},null,2));
+  await app.close();console.log('AuraScript Electron acceptance passed.');
+})().catch(async error=>{console.error(error);if(runningApp)await runningApp.close();process.exit(1);});

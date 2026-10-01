@@ -1,91 +1,72 @@
 using NAudio.Wave;
+using System.Threading.Channels;
 
 namespace JarvisAI.Services;
 
-/// <summary>
-/// Records mic audio to a WAV byte array using NAudio.
-/// Call StartRecording() / StopRecording() → get wav bytes back.
-/// Also provides RMS level for the waveform visualiser.
-/// </summary>
-public class AudioService : IDisposable
+public sealed class AudioService : IDisposable
 {
-    private WaveInEvent?   _waveIn;
-    private MemoryStream?  _buffer;
-    private WaveFileWriter? _writer;
-
-    public event Action<float>? OnRmsLevel;   // 0.0 – 1.0, fires ~20x per second
-    public bool IsRecording { get; private set; }
+    private WaveInEvent? input;
+    private MemoryStream? buffer;
+    private WaveFileWriter? writer;
+    private TaskCompletionSource<byte[]>? finished;
+    private CancellationTokenSource playback = new();
+    private Channel<(byte[] Bytes,string Format)> queue=Channel.CreateUnbounded<(byte[],string)>();
+    public event Action<float>? OnRmsLevel;
+    public event Action<string>? OnError;
+    public bool IsRecording => input is not null;
+    public AudioService(){_=PlayLoop(queue,playback.Token);}
 
     public void StartRecording()
     {
-        if (IsRecording) return;
-
-        _buffer = new MemoryStream();
-        _waveIn  = new WaveInEvent
+        if(IsRecording)return;
+        buffer=new();writer=new(buffer,new WaveFormat(16000,1));finished=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        input=new(){WaveFormat=new WaveFormat(16000,1),BufferMilliseconds=50};
+        input.DataAvailable+=(_,e)=>
         {
-            WaveFormat = new WaveFormat(16000, 1),   // 16kHz mono — Whisper's preferred format
-            BufferMilliseconds = 50,
+            writer?.Write(e.Buffer,0,e.BytesRecorded);double energy=0;
+            for(int i=0;i+1<e.BytesRecorded;i+=2){double sample=BitConverter.ToInt16(e.Buffer,i)/32768d;energy+=sample*sample;}
+            OnRmsLevel?.Invoke((float)Math.Sqrt(energy/Math.Max(1,e.BytesRecorded/2)));
         };
-        _writer = new WaveFileWriter(_buffer, _waveIn.WaveFormat);
-
-        _waveIn.DataAvailable += (_, e) =>
+        input.RecordingStopped+=(_,e)=>
         {
-            _writer.Write(e.Buffer, 0, e.BytesRecorded);
+            writer?.Dispose();var bytes=buffer?.ToArray()??[];
+            input?.Dispose();input=null;writer=null;buffer?.Dispose();buffer=null;
+            if(e.Exception is not null)finished?.TrySetException(e.Exception);else finished?.TrySetResult(bytes);
+        };
+        input.StartRecording();
+    }
 
-            // Compute RMS for waveform bars
-            float rms = 0;
-            for (int i = 0; i < e.BytesRecorded; i += 2)
+    public async Task<byte[]> StopRecordingAsync()
+    {
+        if(input is null||finished is null)return [];
+        var completion=finished.Task;input.StopRecording();return await completion.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public void EnqueueAudio(byte[] bytes,string format)=>queue.Writer.TryWrite((bytes,format));
+    public void StopPlayback()
+    {
+        playback.Cancel();playback.Dispose();playback=new();queue.Writer.TryComplete();queue=Channel.CreateUnbounded<(byte[],string)>();_=PlayLoop(queue,playback.Token);
+    }
+
+    private async Task PlayLoop(Channel<(byte[] Bytes,string Format)> channel,CancellationToken cancellation)
+    {
+        try
+        {
+            await foreach(var item in channel.Reader.ReadAllAsync(cancellation))
             {
-                short sample = BitConverter.ToInt16(e.Buffer, i);
-                rms += sample * sample;
+                try
+                {
+                    using var stream=new MemoryStream(item.Bytes);
+                    using WaveStream reader=item.Format=="wav"?new WaveFileReader(stream):new Mp3FileReader(stream);
+                    using var output=new WaveOutEvent();output.Init(reader);output.Play();
+                    try{while(output.PlaybackState==PlaybackState.Playing)await Task.Delay(20,cancellation);}
+                    finally{output.Stop();}
+                }
+                catch(Exception error) when(error is not OperationCanceledException){OnError?.Invoke(error.Message);}
             }
-            rms = MathF.Sqrt(rms / (e.BytesRecorded / 2)) / short.MaxValue;
-            OnRmsLevel?.Invoke(Math.Min(rms * 8f, 1f));   // amplify for visual clarity
-        };
-
-        _waveIn.StartRecording();
-        IsRecording = true;
+        }
+        catch(OperationCanceledException){}
     }
 
-    public byte[] StopRecording()
-    {
-        if (!IsRecording) return Array.Empty<byte>();
-
-        _waveIn?.StopRecording();
-        _waveIn?.Dispose();
-        _writer?.Flush();
-
-        var bytes = _buffer?.ToArray() ?? Array.Empty<byte>();
-
-        _writer?.Dispose();
-        _buffer?.Dispose();
-        _waveIn  = null;
-        _writer  = null;
-        _buffer  = null;
-        IsRecording = false;
-
-        return bytes;
-    }
-
-    public void PlayAudio(byte[] wavBytes)
-    {
-        if (wavBytes.Length == 0) return;
-        Task.Run(() =>
-        {
-            using var ms     = new MemoryStream(wavBytes);
-            using var reader = new WaveFileReader(ms);
-            using var output = new WaveOutEvent();
-            output.Init(reader);
-            output.Play();
-            while (output.PlaybackState == PlaybackState.Playing)
-                Thread.Sleep(100);
-        });
-    }
-
-    public void Dispose()
-    {
-        _waveIn?.Dispose();
-        _writer?.Dispose();
-        _buffer?.Dispose();
-    }
+    public void Dispose(){playback.Cancel();input?.Dispose();writer?.Dispose();buffer?.Dispose();}
 }

@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 
 logger = logging.getLogger("jarvis.speech")
 
@@ -50,7 +51,6 @@ def clean_text(text: str) -> str:
     t = re.sub(r'[—–]', '-', text)
     t = re.sub(r'[\*\_\#\`]', '', t)
     t = re.sub(r'\[.*?\]\(.*?\)', '', t)   # strip markdown links
-    t = re.sub(r'[^\x00-\x7F]+', ' ', t)
     return re.sub(r'\s+', ' ', t).strip() or text
 
 
@@ -59,6 +59,8 @@ class SpeechProcessor:
     def __init__(self):
         self._groq_client = None
         self._coqui_model = None
+        self._whisper_model = None
+        self._model_lock = threading.Lock()
         # NOTE: we do NOT cache settings fields here — always read from settings at call time
         # so that /api/config/reload takes effect without restart
         from app.config import settings as s
@@ -89,13 +91,13 @@ class SpeechProcessor:
         ext, mime = _detect_audio_format(audio_data)
         logger.info(f"STT: {mime} {len(audio_data)/1024:.1f}KB")
 
-        if self._s.has_groq():
+        if self._s.STT_PROVIDER == 'groq' and self._s.has_groq():
             try:
                 return await self._transcribe_groq(audio_data, ext, mime, language)
             except Exception as e:
                 logger.warning(f"Groq STT failed ({e}) — local Whisper fallback")
 
-        return await self._transcribe_local(audio_data, ext)
+        return await self._transcribe_local(audio_data, ext,language)
 
     async def _transcribe_groq(self, audio_data: bytes, ext: str, mime: str, language: str) -> dict:
         loop = asyncio.get_event_loop()
@@ -113,23 +115,31 @@ class SpeechProcessor:
         logger.info(f"Groq STT → '{text[:80]}'")
         return {"success": True, "text": text, "provider": "groq_whisper"}
 
-    async def _transcribe_local(self, audio_data: bytes, ext: str = ".webm") -> dict:
+    async def _transcribe_local(self, audio_data: bytes, ext: str = ".webm",language: str = 'en') -> dict:
+        tmp_path = None
         try:
             import whisper
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                 tmp.write(audio_data); tmp_path = tmp.name
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: whisper.load_model(self._s.LOCAL_WHISPER_MODEL).transcribe(tmp_path)
-            )
-            os.unlink(tmp_path)
+            def transcribe():
+                with self._model_lock:
+                    if self._whisper_model is None:
+                        self._whisper_model = whisper.load_model(self._s.LOCAL_WHISPER_MODEL)
+                    return self._whisper_model.transcribe(tmp_path,language=None if language=='auto' else language)
+            result = await loop.run_in_executor(None,transcribe)
             text = result["text"].strip()
             logger.info(f"Local Whisper → '{text[:80]}'")
             return {"success": True, "text": text, "provider": "local_whisper"}
         except Exception as e:
             logger.error(f"Local Whisper failed: {e}")
             return {"success": False, "text": "", "error": str(e)}
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     # ════════════════════════════════════════════════════════════════
     #  TTS — reads voice settings fresh every call
@@ -146,19 +156,23 @@ class SpeechProcessor:
             return {"success": False, "error": "Empty text"}
 
         s = self._s  # live settings
-
-        if s.TTS_PROVIDER == "elevenlabs" and s.has_elevenlabs():
-            try:
-                return await self._elevenlabs(clean, s)
-            except Exception as e:
-                logger.warning(f"ElevenLabs failed ({e}) — edge-tts fallback")
+        if s.TTS_PROVIDER == 'none':
+            return {'success': False, 'error': 'Server speech is disabled. Configure an installed speech engine to enable it.'}
 
         try:
-            return await self._edge(clean, s)
+            if s.TTS_PROVIDER == 'elevenlabs':
+                if not s.has_elevenlabs():
+                    raise RuntimeError('The selected speech provider requires an API key.')
+                return await self._elevenlabs(clean,s)
+            if s.TTS_PROVIDER == 'edge':
+                return await self._edge(clean,s)
+            if s.TTS_PROVIDER == 'coqui':
+                return await self._coqui(clean)
+            if s.TTS_PROVIDER == 'gtts':
+                return await self._gtts(clean)
+            raise RuntimeError('Unknown speech provider')
         except Exception as e:
-            logger.warning(f"edge-tts failed ({e}) — gTTS fallback")
-
-        return await self._gtts(clean)
+            return {'success':False,'error':'The selected speech engine is unavailable. Check its installation and configuration.','detail':type(e).__name__}
 
     # ── ElevenLabs ────────────────────────────────────────────────
 
@@ -219,15 +233,20 @@ class SpeechProcessor:
 
     async def _coqui(self, text: str) -> dict:
         from TTS.api import TTS
-        if self._coqui_model is None:
-            self._coqui_model = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             out = tmp.name
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: self._coqui_model.tts_to_file(text=text, file_path=out))
-        with open(out, "rb") as f:
-            audio = f.read()
-        os.unlink(out)
+        def render():
+            with self._model_lock:
+                if self._coqui_model is None:
+                    self._coqui_model = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC")
+                self._coqui_model.tts_to_file(text=text,file_path=out)
+            with open(out,'rb') as stream:
+                return stream.read()
+        try:
+            audio = await asyncio.to_thread(render)
+        finally:
+            if os.path.exists(out):
+                os.unlink(out)
         return {"success": True, "audio_data": audio, "provider": "coqui", "format": "wav"}
 
     # ── gTTS ──────────────────────────────────────────────────────
@@ -236,6 +255,6 @@ class SpeechProcessor:
         from gtts import gTTS
         tts = gTTS(text=text, lang="en", slow=False)
         buf = io.BytesIO()
-        tts.write_to_fp(buf)
+        await asyncio.to_thread(tts.write_to_fp,buf)
         buf.seek(0)
         return {"success": True, "audio_data": buf.read(), "provider": "gtts", "format": "mp3"}

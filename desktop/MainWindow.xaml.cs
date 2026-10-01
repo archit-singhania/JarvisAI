@@ -8,6 +8,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Closed += (_, _) => (DataContext as MainViewModel)?.Dispose();
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

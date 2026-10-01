@@ -1,683 +1,482 @@
-"""
-Girl Wednesday AI — FastAPI main v10
-Fixes vs v9:
-  - No real name ever spoken/displayed — address is always "Sir"
-  - stream_end sends content:"" only — UI must NOT re-render from it (v10 UI handles this)
-  - VAD fires after 1.8s silence (handled in frontend); backend stays clean
-  - Greeting: pure "Sir" only, no name field used
-  - Mood persona no longer embeds name in LLM context
-"""
+"""Wednesday workspace API and versioned realtime protocol."""
+import ast
 import asyncio
 import base64
+import importlib.util
+import io
+import json
 import logging
-import logging.config
+import os
+import platform
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from app.config import settings
+from app.workspace import Workspace
+from app.runtime import Runtime
+from app.llm.client import LLMClient
 
-from app.config import settings, LOGGING_CONFIG
-from app.orchestrator.orchestrator import orchestrator
-from app.speech.interrupt import interrupt_handler
-
-logging.config.dictConfig(LOGGING_CONFIG)
-logger = logging.getLogger("wednesday")
-
-# ── RAG skip keywords ──────────────────────────────────────────────
-_NO_RAG = {
-    "time", "weather", "joke", "rap", "sing", "open", "launch",
-    "search", "remind", "alarm", "calculate", "what time",
-    "temperature", "forecast", "date", "timer", "screenshot", "volume", "mute",
-    "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
-    "how are you", "feeling", "mood",
-}
-
-def _needs_rag(text: str) -> bool:
-    return not any(kw in text.lower() for kw in _NO_RAG)
-
-def _is_creative(text: str) -> bool:
-    return bool(text) and any(text.startswith(t) for t in ("[RAP_MODE", "[SING_MODE", "[JOKE_MODE"))
+logger = logging.getLogger('wednesday')
+store = Workspace(Path(os.environ.get('WEDNESDAY_DATA_DIR', str(settings.DATA_DIR))) / 'workspace.db')
+runtimes = set()
+origins = {x.strip() for x in settings.ALLOWED_ORIGINS.split(',') if x.strip()}
+wake_listener = None
 
 
-# ── Session state ─────────────────────────────────────────────────
-class Session:
-    def __init__(self):
-        self.greeted = False
-        self.mood_asked = False
-        self.mood = "neutral"
-        self.project_introduced = False
-        self.last_project = None
-        self.speaking = False
+def token_from(request):
+    authorization = request.headers.get('authorization','')
+    if authorization.startswith('Bearer '):
+        return authorization[7:]
+    protocols = request.headers.get('sec-websocket-protocol','').split(',')
+    protocol_token = next((p.strip()[6:] for p in protocols if p.strip().startswith('token.')),None)
+    return request.cookies.get('wednesday_token') or protocol_token
 
 
-# ── Connection manager ─────────────────────────────────────────────
-class ConnectionManager:
-    def __init__(self):
-        self.active: list[WebSocket] = []
-        self.sessions: dict[WebSocket, Session] = {}
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-
-    def set_loop(self, loop: asyncio.AbstractEventLoop):
-        self._loop = loop
-
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.active.append(ws)
-        self.sessions[ws] = Session()
-
-    def disconnect(self, ws: WebSocket):
-        self.active = [w for w in self.active if w is not ws]
-        self.sessions.pop(ws, None)
-
-    def session(self, ws: WebSocket) -> Session:
-        return self.sessions.get(ws, Session())
-
-    async def broadcast(self, data: dict):
-        dead = []
-        for ws in self.active:
-            try:
-                await ws.send_json(data)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(ws)
-
-    def broadcast_threadsafe(self, data: dict):
-        if self._loop and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self.broadcast(data), self._loop)
+def owner(request: Request):
+    identity = store.authenticate(token_from(request))
+    if not identity:
+        raise HTTPException(401,'Create or restore a workspace session first')
+    return identity
 
 
-manager = ConnectionManager()
+async def reminder_loop():
+    while True:
+        for reminder in store.due_reminders():
+            for runtime in tuple(runtimes):
+                if runtime.owner == reminder['owner']:
+                    try:
+                        await runtime.send('reminder',content=reminder['text'],reminder_id=reminder['id'],due_at=reminder['due_at'])
+                    except Exception:
+                        logger.debug('Reminder delivery deferred until reconnect')
+        await asyncio.sleep(10)
 
 
-# ── Lifespan ───────────────────────────────────────────────────────
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    loop = asyncio.get_event_loop()
-    manager.set_loop(loop)
-
-    logger.info(f"🌙 Wednesday v10 | TTS:{settings.TTS_PROVIDER} | LLM:{settings.LLM_MODEL}")
-
-    from app.tools.scheduler import ReminderScheduler
-    db_path = Path(settings.DATA_DIR) / "reminders.db"
-
-    def _on_reminder(text: str):
-        manager.broadcast_threadsafe({"type": "reminder", "content": text})
-
-    orchestrator.scheduler = ReminderScheduler(db_path, _on_reminder)
-    await orchestrator.scheduler.start()
-
-    from app.tools.code_watcher import CodeWatcher
-    orchestrator.code_watcher = CodeWatcher(
-        on_interrupt=lambda msg: manager.broadcast_threadsafe({"type": "code_interrupt", "content": msg}),
-        llm_client=orchestrator.llm_client,
-        speech_processor=orchestrator.speech_processor,
-        manager=manager,
-    )
-    orchestrator.code_watcher.start()
-
-    if settings.WAKE_WORD_ENABLED:
-        try:
-            from app.speech.wake_word import WakeWordListener
-
-            def _on_wake():
-                interrupt_handler.interrupt()
-                manager.broadcast_threadsafe({"type": "wake_detected", "content": "Listening…"})
-
-            orchestrator.wake_listener = WakeWordListener(on_detected=_on_wake)
-            orchestrator.wake_listener.start()
-            logger.info("Wake word active")
-        except Exception as e:
-            logger.warning(f"Wake word skipped: {e}")
-
+async def lifespan(app):
+    task = asyncio.create_task(reminder_loop())
     yield
-
-    logger.info("🌙 Wednesday signing off")
-    for attr in ("wake_listener", "scheduler", "code_watcher"):
-        obj = getattr(orchestrator, attr, None)
-        if obj:
-            try: obj.stop()
-            except Exception: pass
-
-
-app = FastAPI(title="Girl Wednesday AI", version="10.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-_ui_path = Path(__file__).parent.parent.parent / "ui"
-_ui_path.mkdir(exist_ok=True)
-app.mount("/ui", StaticFiles(directory=str(_ui_path), html=True), name="ui")
+    task.cancel()
+    await asyncio.gather(task,return_exceptions=True)
+    for runtime in tuple(runtimes):
+        await runtime.interrupt(False)
+    if wake_listener:
+        wake_listener.stop()
 
 
-# ── Health ─────────────────────────────────────────────────────────
-@app.get("/")
-async def root():
-    return {"status": "online", "version": "10.0.0", "name": "Girl Wednesday",
-            "ui": "http://localhost:8000/ui",
-            "address": settings.USER_NAME}
-
-@app.get("/health")
-async def health():
-    return {
-        "llm": settings.LLM_MODEL, "tts": settings.TTS_PROVIDER,
-        "stt": settings.WHISPER_MODEL,
-        "edge_voice": settings.EDGE_TTS_VOICE,
-        "elevenlabs_voice": settings.ELEVENLABS_VOICE_ID,
-        "user_addr": settings.USER_NAME,
-        "groq_ok": settings.has_groq(),
-        "elevenlabs_ok": settings.has_elevenlabs(),
-    }
+app = FastAPI(title='Wednesday / AuraScript',version='1.0.0',lifespan=lifespan)
+app.add_middleware(CORSMiddleware,allow_origins=list(origins),allow_credentials=True,allow_methods=['GET','POST','PATCH','DELETE'],allow_headers=['Authorization','Content-Type','X-Requested-With'])
 
 
-# ── Config endpoints ────────────────────────────────────────────────
-@app.get("/api/config")
-async def get_config():
-    return {
-        "tts_provider":          settings.TTS_PROVIDER,
-        "elevenlabs_voice_id":   settings.ELEVENLABS_VOICE_ID,
-        "edge_tts_voice":        settings.EDGE_TTS_VOICE,
-        "llm_model":             settings.LLM_MODEL,
-        "temperature":           settings.TEMPERATURE,
-        "location_name":         settings.LOCATION_NAME,
-        "jarvis_persona":        settings.JARVIS_PERSONA,
-        "user_name":             settings.USER_NAME,
-        "elevenlabs_configured": settings.has_elevenlabs(),
-        "code_watch_enabled":    settings.CODE_WATCH_ENABLED,
-    }
+@app.middleware('http')
+async def protect_browser(request, call_next):
+    origin = request.headers.get('origin')
+    if request.method not in ('GET','HEAD','OPTIONS') and origin and origin not in origins:
+        return JSONResponse(status_code=403,content={'detail':'Origin is not allowed'})
+    response = await call_next(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'same-origin'
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
-@app.patch("/api/config")
-async def patch_config(body: dict):
-    allowed = {
-        "tts_provider","elevenlabs_voice_id","elevenlabs_model_id",
-        "elevenlabs_stability","elevenlabs_similarity","elevenlabs_style",
-        "elevenlabs_speaker_boost","edge_tts_voice","edge_tts_rate",
-        "edge_tts_volume","edge_tts_pitch","llm_model","temperature",
-        "max_tokens","location_name","location_lat","location_lon",
-        "jarvis_persona","user_name",
-        "wake_word_enabled","code_watch_enabled","code_watch_path",
-    }
-    applied = {}
-    for key, val in body.items():
-        if key.lower() not in allowed:
-            continue
-        attr = key.upper()
+
+@app.exception_handler(KeyError)
+async def not_found(request, error):
+    return JSONResponse(status_code=404,content={'detail':'Owned resource not found'})
+
+
+@app.get('/')
+def root():
+    return RedirectResponse('/ui/')
+
+
+@app.get('/health')
+def health():
+    with store.db() as db:
+        db.execute('SELECT 1')
+    return {'status':'ready','version':1,'demo_mode':settings.DEMO_MODE}
+
+
+@app.post('/api/session')
+def bootstrap(request: Request,response: Response):
+    token = token_from(request)
+    identity = store.authenticate(token)
+    if not identity:
+        identity,token = store.create_owner()
+    response.set_cookie('wednesday_token',token,httponly=True,samesite='strict',secure=request.url.scheme=='https',max_age=60*60*24*365)
+    return {'owner_id':identity,'token':token,'preferences':store.prefs(identity)}
+
+
+@app.get('/api/conversations')
+def conversations(q: str='', identity=Depends(owner)):
+    return {'conversations':store.conversations(identity,q[:200])}
+
+
+class ConversationInput(BaseModel):
+    title: str = Field(default='New conversation',max_length=100)
+    mode: Literal['assistant','coding','research','focus'] = 'assistant'
+
+
+@app.post('/api/conversations')
+def create_conversation(body: ConversationInput,identity=Depends(owner)):
+    return store.conversation(identity,title=body.title,mode=body.mode)
+
+
+@app.get('/api/conversations/{conversation_id}')
+def history(conversation_id: str,identity=Depends(owner)):
+    return {**store.conversation(identity,conversation_id),'messages':store.history(identity,conversation_id)}
+
+
+@app.delete('/api/conversations/{conversation_id}')
+def delete_conversation(conversation_id: str,identity=Depends(owner)):
+    store.delete_conversation(identity,conversation_id)
+    return {'deleted':True}
+
+
+class Preferences(BaseModel):
+    theme: Literal['system','light','dark'] | None = None
+    reduce_motion: bool | None = None
+    reduce_transparency: bool | None = None
+    focus: Literal['assistant','coding','research','focus'] | None = None
+    language: str | None = Field(default=None,max_length=20)
+    tts: bool | None = None
+    llm_provider: Literal['ollama','groq','openai','gemini'] | None = None
+    llm_model: str | None = Field(default=None,max_length=100)
+    ollama_model: str | None = Field(default=None,max_length=100)
+
+
+@app.get('/api/preferences')
+def get_preferences(identity=Depends(owner)):
+    return store.prefs(identity)
+
+
+@app.patch('/api/preferences')
+def preferences(body: Preferences,identity=Depends(owner)):
+    return store.prefs(identity,body.model_dump(exclude_none=True))
+
+
+class RecordInput(BaseModel):
+    title: str = Field(min_length=1,max_length=200)
+    content: str = Field(min_length=1,max_length=200000)
+
+
+@app.get('/api/memories')
+def memories(identity=Depends(owner)):
+    return {'memories':store.records(identity,'memory')}
+
+
+@app.post('/api/memories')
+def add_memory(body: RecordInput,identity=Depends(owner)):
+    return {'id':store.save_record(identity,'memory',body.title,body.content)}
+
+
+@app.patch('/api/memories/{record_id}')
+def edit_memory(record_id: str,body: RecordInput,identity=Depends(owner)):
+    if not any(r['id']==record_id and r['kind']=='memory' for r in store.records(identity)):
+        raise KeyError(record_id)
+    return {'id':store.save_record(identity,'memory',body.title,body.content,identity=record_id)}
+
+
+@app.delete('/api/records/{record_id}')
+def delete_record(record_id: str,identity=Depends(owner)):
+    if not store.delete_record(identity,record_id):
+        raise KeyError(record_id)
+    return {'deleted':True}
+
+
+@app.get('/api/documents')
+def documents(identity=Depends(owner)):
+    return {'documents':[{k:v for k,v in r.items() if k!='content'} for r in store.records(identity,'document')]}
+
+
+@app.post('/api/documents')
+async def upload_document(file: UploadFile,identity=Depends(owner)):
+    raw = await file.read(10*1024*1024+1)
+    if len(raw)>10*1024*1024:
+        raise HTTPException(413,'Document exceeds 10 MB')
+    filename = Path(file.filename or 'document').name
+    try:
+        if filename.lower().endswith('.pdf'):
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(raw))
+            text = '\n\n'.join(p.extract_text() or '' for p in reader.pages)
+        elif Path(filename).suffix.lower() in ('.txt','.md','.csv','.json','.py','.js','.ts','.cs','.dart'):
+            text = raw.decode('utf-8-sig')
+        else:
+            raise HTTPException(415,'Upload PDF, UTF-8 text, Markdown, CSV, JSON, or a supported source file')
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(422,'Document could not be read; scanned PDFs require OCR before import')
+    if not text.strip():
+        raise HTTPException(422,'Document contains no extractable text')
+    identity_record = store.save_record(identity,'document',filename,text[:2000000],{'retrieval':'lexical','bytes':len(raw)})
+    return {'id':identity_record,'title':filename,'characters':len(text),'retrieval':'lexical'}
+
+
+@app.get('/api/search')
+def search(q: str,identity=Depends(owner)):
+    return {'conversations':store.conversations(identity,q[:200]),'sources':store.retrieve(identity,q[:200],10)}
+
+
+class ReminderInput(BaseModel):
+    text: str = Field(min_length=1,max_length=500)
+    due_at: str
+    timezone: str = 'Asia/Kolkata'
+
+
+@app.get('/api/reminders')
+def reminders(identity=Depends(owner)):
+    return {'reminders':store.reminders(identity)}
+
+
+@app.post('/api/reminders')
+def add_reminder(body: ReminderInput,identity=Depends(owner)):
+    try:
+        ZoneInfo(body.timezone)
+        result = store.add_reminder(identity,body.text,body.due_at,body.timezone)
+    except (ValueError,ZoneInfoNotFoundError):
+        raise HTTPException(422,'Supply an ISO date/time and valid IANA timezone. Local times during a daylight-saving gap are invalid.')
+    return {'id':result}
+
+
+@app.delete('/api/reminders/{reminder_id}')
+def cancel_reminder(reminder_id: str,identity=Depends(owner)):
+    if not store.cancel_reminder(identity,reminder_id):
+        raise KeyError(reminder_id)
+    return {'cancelled':True}
+
+
+@app.get('/api/export')
+def export(identity=Depends(owner)):
+    return JSONResponse(store.export(identity),headers={'Content-Disposition':'attachment; filename="wednesday-workspace.json"'})
+
+
+@app.get('/api/receipts')
+def receipts(identity=Depends(owner)):
+    return {'receipts':store.receipts(identity)}
+
+
+@app.get('/api/capabilities')
+async def capabilities(identity=Depends(owner)):
+    models, local_error = [], None
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(settings.OLLAMA_HOST.rstrip('/')+'/api/tags')
+            response.raise_for_status()
+            models = [m['name'] for m in response.json().get('models',[])]
+    except Exception:
+        local_error = 'Ollama is not reachable. Install/start Ollama and download a model.'
+    return {'llm':{'ollama':{'available':bool(models),'models':models,'detail':local_error},'groq':{'available':settings.has_groq()},'openai':{'available':bool(settings.OPENAI_API_KEY)},'gemini':{'available':bool(settings.GEMINI_API_KEY)}},'speech':{'server_tts':settings.TTS_PROVIDER!='none','provider':settings.TTS_PROVIDER,'local_stt':importlib.util.find_spec('whisper') is not None,'groq_stt':settings.has_groq()},'vision':{'local_models':[m for m in models if any(k in m for k in ('llava','vision','gemma3'))],'openai':bool(settings.OPENAI_API_KEY)},'wake_word':{'available':not settings.DEMO_MODE and importlib.util.find_spec('openwakeword') is not None and importlib.util.find_spec('pyaudio') is not None},'host_tools':not settings.DEMO_MODE,'retrieval':'local lexical source retrieval'}
+
+
+class CodeInput(BaseModel):
+    code: str = Field(min_length=1,max_length=100000)
+    language: str = Field(default='python',max_length=30)
+    question: str = Field(default='Review this code and explain actionable improvements.',max_length=1000)
+
+
+@app.post('/api/code/diagnostics')
+def diagnostics(body: CodeInput,identity=Depends(owner)):
+    findings = []
+    if body.language == 'python':
         try:
-            cur = getattr(settings, attr, None)
-            if isinstance(cur, bool):    val = str(val).lower() in ("true","1","yes")
-            elif isinstance(cur, float): val = float(val)
-            elif isinstance(cur, int):   val = int(val)
-            object.__setattr__(settings, attr, val)
-            applied[key] = val
-        except Exception as e:
-            logger.warning(f"Patch {key}: {e}")
-    _write_env(applied)
-    return {"applied": applied}
+            ast.parse(body.code)
+        except SyntaxError as error:
+            findings.append({'line':error.lineno,'column':error.offset,'severity':'error','message':error.msg})
+    elif body.language == 'json':
+        try:
+            json.loads(body.code)
+        except json.JSONDecodeError as error:
+            findings.append({'line':error.lineno,'column':error.colno,'severity':'error','message':error.msg})
+    else:
+        return {'diagnostics':[],'supported':False,'detail':'Use Monaco language services for this language'}
+    return {'diagnostics':findings,'supported':True}
 
-@app.post("/api/config/reload")
-async def reload_config():
-    settings.reload()
-    return {"status": "reloaded"}
 
-def _write_env(patch: dict):
+@app.post('/api/code/analyze')
+async def analyze(body: CodeInput,identity=Depends(owner)):
+    prefs = store.prefs(identity)
+    configuration = settings.model_copy(update={k.upper():prefs[k] for k in ('llm_provider','llm_model','ollama_model')})
     try:
-        env_path = Path(__file__).parent.parent / ".env"
-        if not env_path.exists():
-            return
-        lines = env_path.read_text().splitlines()
-        km = {k.upper(): str(v) for k, v in patch.items()}
-        new, done = [], set()
-        for line in lines:
-            s = line.strip()
-            if s.startswith("#") or "=" not in s:
-                new.append(line); continue
-            ek = s.split("=", 1)[0].strip().upper()
-            if ek in km:
-                new.append(f"{ek}={km[ek]}"); done.add(ek)
-            else:
-                new.append(line)
-        for k, v in km.items():
-            if k not in done:
-                new.append(f"{k}={v}")
-        env_path.write_text("\n".join(new) + "\n")
-    except Exception as e:
-        logger.warning(f"Could not write .env: {e}")
+        result = await LLMClient(configuration).generate_response([{'role':'user','content':f'{body.question}\nLanguage: {body.language}\n```\n{body.code}\n```'}])
+    except Exception:
+        raise HTTPException(503,'Code review engine unavailable; configure a provider')
+    return {'response':result['content']}
 
 
-# ── ElevenLabs endpoints ────────────────────────────────────────────
-@app.get("/api/elevenlabs/voices")
-async def elevenlabs_voices():
-    if not settings.has_elevenlabs():
-        return {"error": "Not configured", "voices": []}
-    import httpx
+class ToolInput(BaseModel):
+    tool: Literal['time','weather','search','open_app']
+    argument: str = Field(default='',max_length=300)
+    confirmed: bool = False
+
+
+@app.post('/api/tools/execute')
+async def tools(body: ToolInput,identity=Depends(owner)):
+    if body.tool == 'open_app':
+        if settings.DEMO_MODE:
+            raise HTTPException(403,'Host tools are disabled in hosted demo mode')
+        if not body.confirmed:
+            raise HTTPException(409,'Confirm this host action before execution')
+        allowed = {'Windows':{'calculator':['calc.exe'],'notepad':['notepad.exe']},'Darwin':{'calculator':['open','-a','Calculator'],'notes':['open','-a','Notes']},'Linux':{'calculator':['gnome-calculator']}}.get(platform.system(),{})
+        command = allowed.get(body.argument.lower())
+        if not command:
+            raise HTTPException(422,'Select a supported app from the allowlist')
+        try:
+            await asyncio.create_subprocess_exec(*command)
+            result = {'success':True,'content':f'Launched {body.argument}'}
+        except OSError:
+            raise HTTPException(503,'The selected app is unavailable on this device')
+    elif body.tool == 'time':
+        result = {'success':True,'content':datetime.now().astimezone().isoformat()}
+    else:
+        from app.tools.manager import get_weather, web_search
+        content = await (get_weather(body.argument) if body.tool=='weather' else web_search(body.argument))
+        result = {'success':not content.lower().startswith(('search failed','couldn\'t','weather unavailable')),'content':content}
+    result['receipt_id'] = store.receipt(identity,body.tool,result)
+    return result
+
+
+class WorkflowInput(BaseModel):
+    title: str = Field(min_length=1,max_length=100)
+    steps: list[ToolInput] = Field(min_length=1,max_length=10)
+
+
+@app.get('/api/workflows')
+def workflows(identity=Depends(owner)):
+    return {'workflows':store.records(identity,'workflow')}
+
+
+@app.post('/api/workflows')
+def save_workflow(body: WorkflowInput,identity=Depends(owner)):
+    return {'id':store.save_record(identity,'workflow',body.title,json.dumps([s.model_dump() for s in body.steps]))}
+
+
+@app.post('/api/workflows/{workflow_id}/run')
+async def run_workflow(workflow_id: str,identity=Depends(owner)):
+    record = next((r for r in store.records(identity,'workflow') if r['id']==workflow_id),None)
+    if not record:
+        raise KeyError(workflow_id)
+    results = []
+    for step in json.loads(record['content']):
+        command = ToolInput.model_validate(step)
+        if command.tool == 'open_app':
+            raise HTTPException(409,'Host actions require individual confirmation and cannot run from a workflow')
+        results.append(await tools(command,identity))
+    return {'results':results}
+
+
+@app.post('/api/wake-word/{action}')
+async def wake_word(action: Literal['start','stop'],identity=Depends(owner)):
+    global wake_listener
+    if settings.DEMO_MODE:
+        raise HTTPException(403,'Local microphone access disabled in demo mode')
+    if action == 'stop':
+        if wake_listener:
+            wake_listener.stop()
+        wake_listener = None
+        return {'active':False}
+    if importlib.util.find_spec('openwakeword') is None or importlib.util.find_spec('pyaudio') is None:
+        raise HTTPException(503,'Install the optional wake-word dependencies and model first')
+    if wake_listener:
+        raise HTTPException(409,'Wake-word listener already active')
+    from app.speech.wake_word import WakeWordListener
+    loop = asyncio.get_running_loop()
+    async def notify():
+        for runtime in tuple(runtimes):
+            if runtime.owner==identity:
+                await runtime.interrupt()
+                await runtime.send('wake_detected')
+    wake_listener = WakeWordListener(lambda:loop.call_soon_threadsafe(lambda:loop.create_task(notify())))
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
-            r = await c.get("https://api.elevenlabs.io/v1/voices",
-                            headers={"xi-api-key": settings.ELEVENLABS_API_KEY})
-        voices = [
-            {"voice_id": v["voice_id"], "name": v["name"],
-             "category": v.get("category",""), "preview_url": v.get("preview_url",""),
-             "labels": v.get("labels",{})}
-            for v in r.json().get("voices", [])
-        ]
-        voices.sort(key=lambda x: (x["category"] != "premade", x["name"]))
-        return {"voices": voices, "current": settings.ELEVENLABS_VOICE_ID}
-    except Exception as e:
-        return {"error": str(e), "voices": []}
+        await asyncio.to_thread(wake_listener.start)
+    except Exception as error:
+        wake_listener = None
+        raise HTTPException(503,'Wake-word model or microphone could not start. Install its ONNX model and allow microphone access.') from error
+    return {'active':True,'detail':'Local wake-word model and microphone are active'}
 
-@app.get("/api/elevenlabs/usage")
-async def elevenlabs_usage():
-    if not settings.has_elevenlabs():
-        return {"error": "Not configured"}
-    import httpx
+
+@app.websocket('/ws')
+async def socket(ws: WebSocket):
+    origin = ws.headers.get('origin')
+    if origin and origin not in origins:
+        await ws.close(1008)
+        return
+    identity = store.authenticate(token_from(ws))
+    if not identity:
+        await ws.close(1008)
+        return
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
-            r = await c.get("https://api.elevenlabs.io/v1/user",
-                            headers={"xi-api-key": settings.ELEVENLABS_API_KEY})
-        sub = r.json().get("subscription", {})
-        used, lim = sub.get("character_count", 0), sub.get("character_limit", 10000)
-        return {"used": used, "limit": lim, "remaining": lim - used}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ── Code endpoints ──────────────────────────────────────────────────
-@app.post("/api/code/context")
-async def receive_code_context(body: dict):
-    if hasattr(orchestrator, "code_watcher"):
-        await orchestrator.code_watcher.update_context(body)
-    return {"status": "received"}
-
-@app.post("/api/code/analyze")
-async def analyze_code(body: dict):
-    code     = body.get("code", "")
-    lang     = body.get("language", "python")
-    question = body.get("question", "Review this code. Give concise actionable feedback.")
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "code required"})
-
-    prompt = (
-        f"You are reviewing {lang} code. They ask: '{question}'\n\n"
-        f"```{lang}\n{code}\n```\n\n"
-        f"Address the user as 'Sir'. Be concise — 2 sentences max. "
-        f"Speak naturally. Be direct, witty, and helpful."
-    )
-    result = await orchestrator.llm_client.generate_response(
-        messages=[{"role": "user", "content": prompt}])
-    response_text = result.get("content", "")
-    tts = await orchestrator.speech_processor.synthesize(response_text)
-    if tts.get("audio_data"):
-        manager.broadcast_threadsafe({
-            "type": "code_feedback", "content": response_text,
-            "audio_b64": base64.b64encode(tts["audio_data"]).decode(),
-            "audio_format": tts.get("format", "mp3"),
-        })
-    return {"response": response_text}
-
-
-# ── WebSocket ───────────────────────────────────────────────────────
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await manager.connect(ws)
-    session = manager.session(ws)
-    logger.info("WS connected")
-
-    await _do_greeting(ws, session)
-
+        conversation = store.conversation(identity,ws.query_params.get('conversation_id'))
+    except KeyError:
+        await ws.close(1008)
+        return
+    await ws.accept(subprotocol='wednesday.v1' if 'wednesday.v1' in ws.headers.get('sec-websocket-protocol','') else None)
+    runtime = Runtime(ws,store,identity,conversation['id'])
+    runtimes.add(runtime)
+    await runtime.send('session',preferences=store.prefs(identity),history=store.history(identity,conversation['id']))
     try:
         while True:
-            data  = await ws.receive_json()
-            mtype = data.get("type")
-
-            if mtype == "interrupt":
-                interrupt_handler.interrupt()
-                session.speaking = False
-                await ws.send_json({"type": "interrupted"})
+            data = await ws.receive_json()
+            if not isinstance(data,dict):
+                await runtime.send('error',code='invalid_message',content='Message must be a JSON object')
                 continue
-
-            interrupt_handler.reset()
-
-            if mtype == "text":
-                txt = data.get("content", "").strip()
-                if txt:
-                    await _handle_text(ws, session, txt, speak=data.get("tts", True))
-
-            elif mtype == "audio":
-                raw = data.get("audio_b64", "")
-                if raw:
-                    await _handle_audio(ws, session, base64.b64decode(raw))
-
-            elif mtype == "code_context":
-                if hasattr(orchestrator, "code_watcher"):
-                    await orchestrator.code_watcher.update_context(data)
-                await _maybe_intro_project(ws, session, data)
-
-            elif mtype == "clear":
-                orchestrator.clear_history()
-                session.greeted = False
-                session.mood_asked = False
-                session.project_introduced = False
-                session.mood = "neutral"
-                await ws.send_json({"type": "cleared"})
-                await _do_greeting(ws, session)
-
-    except WebSocketDisconnect:
-        manager.disconnect(ws)
-        logger.info("WS disconnected")
-    except Exception as e:
-        logger.error(f"WS error: {e}", exc_info=True)
-        manager.disconnect(ws)
-
-
-# ── Greeting — says "Sir" only, never a name ───────────────────────
-async def _do_greeting(ws: WebSocket, session: Session):
-    if session.greeted:
-        return
-    session.greeted = True
-
-    hour = datetime.now().hour
-    if 5 <= hour < 12:
-        time_str = "morning"
-    elif 12 <= hour < 17:
-        time_str = "afternoon"
-    elif 17 <= hour < 21:
-        time_str = "evening"
-    else:
-        time_str = "night"
-
-    greeting = (
-        f"Good {time_str}, Sir. I'm Wednesday — ready when you are. "
-        f"How are you feeling, and what are we working on?"
-    )
-
-    session.mood_asked = True
-    await ws.send_json({"type": "response", "content": greeting, "is_greeting": True})
-    await _send_tts(ws, greeting)
-    _add_history(None, greeting)
+            kind = data.get('type')
+            if kind == 'interrupt':
+                await runtime.interrupt()
+            elif kind == 'text':
+                text = str(data.get('content','')).strip()
+                if not text or len(text)>12000:
+                    await runtime.send('error',code='invalid_text',content='Text must contain 1–12000 characters')
+                else:
+                    await runtime.start(text=text,speak=bool(data.get('tts',False)))
+            elif kind == 'audio':
+                try:
+                    encoded = data.get('audio_b64','')
+                    if len(encoded)>14*1024*1024:
+                        raise ValueError()
+                    raw = base64.b64decode(encoded,validate=True)
+                    if not raw or len(raw)>10*1024*1024:
+                        raise ValueError()
+                    await runtime.start(audio=raw,speak=bool(data.get('tts',True)),language=str(data.get('language','en'))[:20])
+                except (ValueError,TypeError):
+                    await runtime.send('error',code='invalid_audio',content='Upload valid audio under 10 MB')
+            elif kind == 'clear':
+                await runtime.interrupt(False)
+                runtime.conversation = store.conversation(identity)['id']
+                await runtime.send('cleared')
+            elif kind == 'code_context':
+                runtime.context = f"File: {str(data.get('file',''))[:200]}\n{str(data.get('content',''))[:12000]}"
+                await runtime.send('context_updated')
+            elif kind == 'reminder_ack':
+                store.acknowledge_reminder(identity,str(data.get('reminder_id','')))
+            elif kind in ('screen','image'):
+                try:
+                    encoded = data.get('image_b64','')
+                    if not isinstance(encoded,str) or len(encoded)>12*1024*1024:
+                        raise ValueError()
+                    raw = base64.b64decode(encoded,validate=True)
+                    if not raw or len(raw)>8*1024*1024:
+                        raise ValueError()
+                    await runtime.start_image(raw,str(data.get('prompt','Describe this selected image.'))[:500])
+                except (ValueError,TypeError):
+                    await runtime.send('error',code='invalid_image',content='Select a PNG, JPEG, or WebP image under 8 MB.')
+            else:
+                await runtime.send('error',code='unknown_message',content='Unsupported message type')
+    except (WebSocketDisconnect,RuntimeError):
+        pass
+    finally:
+        await runtime.interrupt(False)
+        runtimes.discard(runtime)
 
 
-async def _maybe_intro_project(ws: WebSocket, session: Session, data: dict):
-    if session.project_introduced:
-        return
-    file_path = data.get("file", "")
-    content   = data.get("content", "")
-    lang      = data.get("language", "code")
-    if not content or not file_path or len(content) < 50:
-        return
-
-    session.project_introduced = True
-    filename = file_path.split("/")[-1]
-
-    mood_ctx = {
-        "frustrated": "The user is frustrated — lead with something encouraging.",
-        "tired":      "The user is tired — one sentence only.",
-    }.get(session.mood, "")
-
-    prompt = (
-        f"{mood_ctx}\n"
-        f"You've just looked at the file '{filename}' ({lang}):\n\n"
-        f"```{lang}\n{content[:1500]}\n```\n\n"
-        f"Give a 2-sentence take: what this does, and one thing worth focusing on. "
-        f"Address the user as 'Sir'. Be direct, witty, and natural."
-    )
-
-    try:
-        result = await orchestrator.llm_client.generate_response(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt=settings.JARVIS_PERSONA
-        )
-        intro = result.get("content", "")
-        if intro:
-            await ws.send_json({"type": "response", "content": intro, "is_project_intro": True})
-            await _send_tts(ws, intro)
-            _add_history(None, intro)
-    except Exception as e:
-        logger.error(f"Project intro error: {e}")
-
-
-# ── Mood detection ──────────────────────────────────────────────────
-def _detect_mood(text: str) -> str:
-    lower = text.lower()
-    if any(w in lower for w in ["great","amazing","fantastic","excited","good","happy","awesome","well","brilliant","splendid"]):
-        return "positive"
-    if any(w in lower for w in ["tired","exhausted","sleepy","slow","not great","knackered","low"]):
-        return "tired"
-    if any(w in lower for w in ["frustrated","annoyed","stuck","bad","angry","stressed","not good","terrible","awful","rubbish"]):
-        return "frustrated"
-    return "neutral"
-
-def _mood_adjusted_persona(mood: str, base_persona: str) -> str:
-    ctx = {
-        "positive":   "The user is in high spirits — match their energy, be playful.",
-        "tired":      "The user is exhausted — be gentle, very brief, one sentence answers only.",
-        "frustrated": "The user is frustrated — be calm, patient, and focused on solutions. No jokes.",
-    }.get(mood, "")
-    return f"{base_persona}\n\n{ctx}" if ctx else base_persona
-
-
-# ── Text handler ────────────────────────────────────────────────────
-async def _handle_text(ws: WebSocket, session: Session, user_text: str, speak: bool = True):
-    # Mood ack on first mood reply
-    if session.mood_asked and session.mood == "neutral":
-        mood_words = ["great","tired","okay","fine","bad","good","frustrated","yeah",
-                      "brilliant","terrible","alright","knackered","low","not great","splendid"]
-        if any(w in user_text.lower() for w in mood_words):
-            detected = _detect_mood(user_text)
-            session.mood = detected if detected != "neutral" else "neutral"
-            mood_acks = {
-                "positive":   "Excellent — let's make the most of it, Sir. What are we working on?",
-                "tired":      "Understood, Sir. We'll keep things quick and painless.",
-                "frustrated": "Fair enough, Sir. Let's sort whatever's vexing you.",
-                "neutral":    "Right then, Sir. What shall we tackle today?",
-            }
-            ack = mood_acks.get(session.mood, "Right, Sir. What are we building?")
-            await ws.send_json({"type": "response", "content": ack})
-            if speak:
-                await _send_tts(ws, ack)
-            _add_history(None, ack)
-            return
-
-    tool_result = await orchestrator.tool_manager.detect_and_execute(user_text)
-    if tool_result and tool_result.get("success"):
-        text = tool_result["result"]
-        if not _is_creative(text):
-            await ws.send_json({"type": "response", "content": text, "tool_used": tool_result["tool"]})
-            if speak:
-                await _send_tts(ws, text)
-            _add_history(user_text, text)
-            return
-        user_text = text
-
-    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA)
-    orchestrator.conversation_history.append(
-        {"role": "user", "content": user_text, "timestamp": datetime.now().isoformat()})
-    orchestrator._trim_history()
-    rag = await orchestrator.rag_engine.query(user_text) if _needs_rag(user_text) else None
-
-    await ws.send_json({"type": "stream_start"})
-    session.speaking = True
-    full = await _stream_and_speak(ws, session, rag, speak, system_prompt=persona)
-    session.speaking = False
-    # stream_end carries no content — UI must not re-render from it
-    await ws.send_json({"type": "stream_end", "content": ""})
-    _add_history(None, full)
-
-
-# ── Audio handler ────────────────────────────────────────────────────
-async def _handle_audio(ws: WebSocket, session: Session, audio_data: bytes):
-    await ws.send_json({"type": "stt_start"})
-    tr = await orchestrator.speech_processor.transcribe(audio_data)
-
-    if not tr.get("success") or not tr.get("text", "").strip():
-        await ws.send_json({"type": "stt_error", "content": "Didn't quite catch that."})
-        return
-
-    user_text = tr["text"].strip()
-    await ws.send_json({"type": "transcript", "content": user_text})
-    logger.info(f"Heard: '{user_text}'")
-
-    # Stop command
-    if any(w in user_text.lower() for w in {"stop","cancel","shut up","be quiet","silence","quiet","enough","hush"}):
-        interrupt_handler.interrupt()
-        session.speaking = False
-        resp = "Of course, Sir."
-        await ws.send_json({"type": "response", "content": resp, "tool_used": "interrupt"})
-        await _send_tts(ws, resp)
-        return
-
-    # Mood detection from greeting response
-    if session.mood_asked and session.mood == "neutral":
-        mood_words = ["great","tired","okay","fine","bad","good","frustrated","yeah",
-                      "brilliant","terrible","alright","knackered","low","not great","splendid"]
-        if any(w in user_text.lower() for w in mood_words):
-            detected = _detect_mood(user_text)
-            session.mood = detected if detected != "neutral" else "neutral"
-            mood_acks = {
-                "positive":   "Brilliant. Let's get cracking, Sir.",
-                "tired":      "Right then, Sir. Quick and efficient it is.",
-                "frustrated": "Say no more. Let's fix whatever's broken, Sir.",
-                "neutral":    "Right, Sir. What are we working on today?",
-            }
-            ack = mood_acks.get(session.mood, "Right. What are we building, Sir?")
-            await ws.send_json({"type": "response", "content": ack})
-            await _send_tts(ws, ack)
-            _add_history(None, ack)
-            return
-
-    # Code context injection
-    code_kws = {"code","function","file","my code","bug","error","refactor","explain",
-                "how does","review","debug","fix","approach","better way","what does","improve"}
-    if any(kw in user_text.lower() for kw in code_kws) and hasattr(orchestrator, "code_watcher"):
-        ctx = orchestrator.code_watcher.get_context_snippet()
-        if ctx:
-            user_text = f"{user_text}\n\n[Current code context]\n{ctx}"
-
-    tool_result = await orchestrator.tool_manager.detect_and_execute(user_text)
-    if tool_result and tool_result.get("success"):
-        text = tool_result["result"]
-        if not _is_creative(text):
-            await ws.send_json({"type": "response", "content": text, "tool_used": tool_result["tool"]})
-            await _send_tts(ws, text)
-            _add_history(user_text, text)
-            return
-        user_text = text
-
-    persona = _mood_adjusted_persona(session.mood, settings.JARVIS_PERSONA)
-    orchestrator.conversation_history.append(
-        {"role": "user", "content": user_text, "timestamp": datetime.now().isoformat()})
-    orchestrator._trim_history()
-    rag = await orchestrator.rag_engine.query(user_text) if _needs_rag(user_text) else None
-
-    await ws.send_json({"type": "stream_start"})
-    session.speaking = True
-    full = await _stream_and_speak(ws, session, rag, speak=True, system_prompt=persona)
-    session.speaking = False
-    await ws.send_json({"type": "stream_end", "content": ""})
-    _add_history(None, full)
-
-
-# ── Stream + speak ──────────────────────────────────────────────────
-async def _stream_and_speak(
-    ws: WebSocket, session: Session, rag,
-    speak: bool, system_prompt: Optional[str] = None
-) -> str:
-    full = ""
-    buf  = ""
-
-    try:
-        async for token in orchestrator.llm_client.stream_response(
-                messages=orchestrator.conversation_history,
-                rag_context=rag,
-                system_prompt=system_prompt):
-
-            if interrupt_handler.is_interrupted:
-                await ws.send_json({"type": "stream_interrupted"})
-                session.speaking = False
-                return full
-
-            full += token
-            buf  += token
-            await ws.send_json({"type": "stream_chunk", "content": token})
-
-            if speak and _ends_sentence(buf):
-                sentence = buf.strip()
-                buf = ""
-                if sentence:
-                    asyncio.create_task(_send_tts(ws, sentence))
-
-    except Exception as e:
-        logger.error(f"LLM stream error: {e}")
-        err = "Terribly sorry, Sir — something went sideways on my end. Shall we try again?"
-        await ws.send_json({"type": "stream_chunk", "content": err})
-        if speak:
-            asyncio.create_task(_send_tts(ws, err))
-        return err
-
-    if speak and buf.strip():
-        asyncio.create_task(_send_tts(ws, buf.strip()))
-
-    return full
-
-
-async def _send_tts(ws: WebSocket, text: str):
-    try:
-        result = await orchestrator.speech_processor.synthesize(text)
-        if result.get("success") and result.get("audio_data"):
-            await ws.send_json({
-                "type":         "audio_chunk",
-                "audio_b64":    base64.b64encode(result["audio_data"]).decode(),
-                "audio_format": result.get("format", "mp3"),
-                "text":         text,
-            })
-    except Exception as e:
-        logger.warning(f"TTS send error: {e}")
-
-
-def _ends_sentence(text: str) -> bool:
-    s = text.strip()
-    return bool(s) and (s[-1] in '.!?…' or (s[-1] == ',' and len(s) > 80))
-
-def _add_history(user: Optional[str], assistant: str):
-    ts = datetime.now().isoformat()
-    if user:
-        orchestrator.conversation_history.append({"role": "user", "content": user, "timestamp": ts})
-    orchestrator.conversation_history.append({"role": "assistant", "content": assistant, "timestamp": ts})
-
-
-# ── REST endpoints ──────────────────────────────────────────────────
-@app.post("/api/speech/synthesize")
-async def synthesize(request: dict):
-    text = request.get("text", "")
-    if not text:
-        return JSONResponse(status_code=400, content={"error": "text required"})
-    result = await orchestrator.speech_processor.synthesize(text)
-    if result.get("success"):
-        mime = "audio/wav" if result.get("format") == "wav" else "audio/mpeg"
-        return Response(content=result["audio_data"], media_type=mime)
-    return JSONResponse(status_code=500, content={"error": "TTS failed"})
-
-@app.post("/api/rag/add")
-async def rag_add(request: dict):
-    meta = request.get("metadata") or {"source": "user"}
-    ok = await orchestrator.rag_engine.add_document(
-        request.get("text", ""),
-        request.get("doc_id", f"doc_{__import__('time').time()}"),
-        meta)
-    return {"success": ok}
-
-@app.get("/api/history")
-async def get_history():
-    return {"history": orchestrator.get_history()}
-
-@app.delete("/api/history")
-async def clear_history():
-    orchestrator.clear_history()
-    return {"success": True}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)
+app.mount('/ui',StaticFiles(directory=str(Path(__file__).resolve().parents[2]/'ui'),html=True),name='ui')

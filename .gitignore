@@ -29,3 +29,11 @@ backend/.env
 # IDE
 .vscode/
 .idea/
+
+# Maintained Electron source uses a lockfile; generated bundles stay local.
+aurascript/node_modules/
+aurascript/src/vendor/
+aurascript/dist/
+release/
+test-results/
+playwright-report/

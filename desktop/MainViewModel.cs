@@ -1,189 +1,123 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using JarvisAI.Models;
 using JarvisAI.Services;
+using Microsoft.Win32;
 
 namespace JarvisAI;
-
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
-    private readonly JarvisWebSocketService _ws;
-    private readonly AudioService           _audio;
-    private readonly DispatcherTimer        _waveTimer;
-
-    // ── Observable state ──────────────────────────────────────── //
-    [ObservableProperty] private string inputText         = "";
-    [ObservableProperty] private string connectionStatus  = "Connecting...";
-    [ObservableProperty] private bool   isListening       = false;
-    [ObservableProperty] private Color  micButtonColor    = Color.FromRgb(0x1C, 0x23, 0x33);
-    [ObservableProperty] private string currentMode       = "text";   // "text" | "voice"
-
-    public ObservableCollection<ChatMessage> Messages  { get; } = new();
-    public ObservableCollection<string>      ToolLog   { get; } = new();
-    public ObservableCollection<double>      WaveformBars { get; } = new();
-
-    // ------------------------------------------------------------------ //
-    //  Init                                                                //
-    // ------------------------------------------------------------------ //
+    private readonly JarvisWebSocketService ws=new();
+    private readonly AudioService audio=new();
+    private readonly HttpClient http=new(){BaseAddress=new Uri(Environment.GetEnvironmentVariable("WEDNESDAY_URL")??"http://127.0.0.1:8000")};
+    private readonly string stateFile=Path.Combine(Environment.GetEnvironmentVariable("WEDNESDAY_CLIENT_DATA")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Wednesday"),"session.json");
+    private string token="",conversation="",turn="";
+    private ChatMessage? streaming;
+    private readonly HashSet<string> blocked=[];
+    [ObservableProperty] private string inputText="";
+    [ObservableProperty] private string connectionStatus="Connecting workspace…";
+    [ObservableProperty] private string section="Assistant";
+    [ObservableProperty] private string recordTitle="";
+    [ObservableProperty] private string recordContent="";
+    [ObservableProperty] private string reminderTime=DateTime.Now.AddHours(1).ToString("yyyy-MM-dd HH:mm");
+    [ObservableProperty] private bool isListening;
+    [ObservableProperty] private bool speakResponses;
+    [ObservableProperty] private string focus="assistant";
+    [ObservableProperty] private string appearance="system";
+    [ObservableProperty] private string modelProvider="ollama";
+    [ObservableProperty] private string localModel="llama3.1:8b";
+    [ObservableProperty] private string cloudModel="llama-3.1-8b-instant";
+    [ObservableProperty] private string language="en";
+    [ObservableProperty] private bool reduceMotion;
+    [ObservableProperty] private bool reduceTransparency;
+    private string editingId="";
+    public ObservableCollection<ChatMessage> Messages{get;}=[];
+    public ObservableCollection<WorkspaceItem> Items{get;}=[];
+    public ObservableCollection<double> WaveformBars{get;}=new(Enumerable.Repeat(4d,32));
 
     public MainViewModel()
     {
-        _ws    = new JarvisWebSocketService();
-        _audio = new AudioService();
-
-        // Seed waveform with 32 bars
-        for (int i = 0; i < 32; i++) WaveformBars.Add(4);
-
-        // Wire WS events
-        _ws.OnConnectionChanged += connected =>
-            App.Current.Dispatcher.Invoke(() =>
-                ConnectionStatus = connected ? "● Connected to backend" : "✕ Disconnected");
-
-        _ws.OnTextResponse += (text, tool) =>
-            App.Current.Dispatcher.Invoke(() =>
-            {
-                AddMessage("JARVIS", text, isUser: false);
-                if (tool is not null) LogTool(tool, text);
-            });
-
-        _ws.OnAudioResponse += (text, audioBytes) =>
-            App.Current.Dispatcher.Invoke(() =>
-            {
-                AddMessage("JARVIS", text, isUser: false);
-                if (audioBytes is not null) _audio.PlayAudio(audioBytes);
-            });
-
-        // Waveform animation timer
-        _waveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
-        _waveTimer.Tick += AnimateWaveform;
-
-        // Mic RMS → waveform bars
-        _audio.OnRmsLevel += rms =>
-            App.Current.Dispatcher.InvokeAsync(() => PushRmsToWaveform(rms));
-
-        _ = ConnectAsync();
+        ws.OnConnectionChanged+=connected=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus=connected?"Workspace connected":"Disconnected · use Reconnect");
+        ws.MessageReceived+=message=>Application.Current.Dispatcher.Invoke(()=>Handle(message));
+        audio.OnRmsLevel+=rms=>Application.Current.Dispatcher.InvokeAsync(()=>{for(int i=0;i<31;i++)WaveformBars[i]=WaveformBars[i+1];WaveformBars[31]=Math.Max(4,rms*160);});
+        audio.OnError+=error=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus="Audio: "+error);
+        _=Guard(Initialize);
     }
 
-    private async Task ConnectAsync()
+    private async Task<JsonElement> Api(string path,HttpMethod? method=null,object? body=null)
     {
-        await _ws.ConnectAsync();
-        AddMessage("JARVIS", "Hello! I'm Jarvis. How can I help you today?", isUser: false);
+        using var request=new HttpRequestMessage(method??HttpMethod.Get,"/api/"+path);
+        if(body is not null)request.Content=new StringContent(JsonSerializer.Serialize(body),Encoding.UTF8,"application/json");
+        using var response=await http.SendAsync(request);var text=await response.Content.ReadAsStringAsync();
+        if(!response.IsSuccessStatusCode)throw new InvalidOperationException(text);
+        using var json=JsonDocument.Parse(text);return json.RootElement.Clone();
     }
 
-    // ------------------------------------------------------------------ //
-    //  Commands                                                            //
-    // ------------------------------------------------------------------ //
-
-    [RelayCommand]
-    private async Task SendText()
+    private async Task Initialize()
     {
-        var text = InputText.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-
-        AddMessage("YOU", text, isUser: true);
-        InputText = "";
-        await _ws.SendTextAsync(text);
+        if(File.Exists(stateFile)){using var saved=JsonDocument.Parse(await File.ReadAllTextAsync(stateFile));token=saved.RootElement.GetProperty("token").GetString()??"";conversation=saved.RootElement.GetProperty("conversation").GetString()??"";}
+        http.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",token);
+        var session=await Api("session",HttpMethod.Post);var newToken=session.GetProperty("token").GetString()!;
+        if(newToken!=token)conversation="";
+        token=newToken;http.DefaultRequestHeaders.Authorization=new("Bearer",token);
+        if(conversation.Length>0){try{await Api("conversations/"+conversation);}catch{conversation="";}}
+        var p=session.GetProperty("preferences");SpeakResponses=p.GetProperty("tts").GetBoolean();Focus=p.GetProperty("focus").GetString()??"assistant";
+        Appearance=Text(p,"theme");ModelProvider=Text(p,"llm_provider");LocalModel=Text(p,"ollama_model");CloudModel=Text(p,"llm_model");Language=Text(p,"language");ReduceMotion=p.GetProperty("reduce_motion").GetBoolean();ReduceTransparency=p.GetProperty("reduce_transparency").GetBoolean();ThemeManager.Apply(Appearance);
+        await Connect();
     }
 
-    [RelayCommand]
-    private async Task ToggleMic()
+    private async Task Connect()
     {
-        if (!_audio.IsRecording)
+        var endpoint=new UriBuilder(http.BaseAddress!){Scheme=http.BaseAddress!.Scheme=="https"?"wss":"ws",Path="/ws",Query=conversation.Length>0?"conversation_id="+conversation:""};
+        await ws.ConnectAsync(endpoint.Uri,token);
+    }
+    private async Task Guard(Func<Task> action){try{await action();}catch(Exception error){ConnectionStatus=error.Message.Length>220?error.Message[..220]:error.Message;}}
+    private static string Text(JsonElement data,string name)=>data.TryGetProperty(name,out var value)?value.GetString()??"":"";
+
+    private void Handle(JsonElement data)
+    {
+        var type=Text(data,"type");var eventTurn=Text(data,"turn_id");
+        if(type=="stream_start"){turn=eventTurn;streaming=new(){Sender="Wednesday"};Messages.Add(streaming);}
+        if(blocked.Contains(eventTurn)&&type!="interrupted")return;
+        switch(type)
         {
-            // Start recording
-            _audio.StartRecording();
-            IsListening    = true;
-            MicButtonColor = Color.FromArgb(0xFF, 0x00, 0xD4, 0xFF);
-            _waveTimer.Start();
-        }
-        else
-        {
-            // Stop and send
-            _waveTimer.Stop();
-            IsListening    = false;
-            MicButtonColor = Color.FromRgb(0x1C, 0x23, 0x33);
-
-            var wavBytes = _audio.StopRecording();
-            if (wavBytes.Length > 0)
-            {
-                AddMessage("YOU", "🎤 [Voice message sent]", isUser: true);
-                await _ws.SendAudioAsync(wavBytes);
-            }
-
-            ResetWaveform();
+            case "session":
+                conversation=Text(data,"conversation_id");Messages.Clear();
+                foreach(var m in data.GetProperty("history").EnumerateArray())Messages.Add(new(){Sender=Text(m,"role")=="user"?"You":"Wednesday",Content=Text(m,"content"),IsUser=Text(m,"role")=="user"});
+                Directory.CreateDirectory(Path.GetDirectoryName(stateFile)!);File.WriteAllText(stateFile,JsonSerializer.Serialize(new{token,conversation}));break;
+            case "stream_chunk":if(streaming is not null)streaming.Content+=Text(data,"content");break;
+            case "stream_end":streaming=null;ConnectionStatus="Ready when you are";break;
+            case "response":case "reminder":Messages.Add(new(){Content=Text(data,"content")});if(type=="reminder")_=ws.SendAsync(new{type="reminder_ack",reminder_id=Text(data,"reminder_id")});break;
+            case "audio_chunk":audio.EnqueueAudio(Convert.FromBase64String(Text(data,"audio_b64")),Text(data,"audio_format"));break;
+            case "transcript":Messages.Add(new(){Sender="You",IsUser=true,Content=Text(data,"content")});break;
+            case "interrupted":audio.StopPlayback();streaming=null;ConnectionStatus="Interrupted";break;
+            case "error":case "stt_error":case "speech_unavailable":ConnectionStatus=Text(data,"content");break;
+            case "cleared":conversation=Text(data,"conversation_id");Messages.Clear();File.WriteAllText(stateFile,JsonSerializer.Serialize(new{token,conversation}));break;
         }
     }
 
-    [RelayCommand]
-    private void SetMode(string mode) => CurrentMode = mode;
-
-    [RelayCommand]
-    private async Task ScreenAnalyze() =>
-        await _ws.SendScreenAnalyzeAsync("Describe what's on my screen in detail.");
-
-    [RelayCommand]
-    private void AddMemory()
-    {
-        // TODO Phase 3: open a small dialog, let user type a fact to remember
-        AddMessage("JARVIS", "Memory feature coming in Phase 3! You'll be able to teach me personal facts.", isUser: false);
-    }
-
-    [RelayCommand]
-    private async Task ClearChat()
-    {
-        Messages.Clear();
-        ToolLog.Clear();
-        await _ws.SendClearAsync();
-        AddMessage("JARVIS", "Chat cleared. Fresh start!", isUser: false);
-    }
-
-    // ------------------------------------------------------------------ //
-    //  Helpers                                                             //
-    // ------------------------------------------------------------------ //
-
-    private void AddMessage(string sender, string content, bool isUser)
-    {
-        Messages.Add(new ChatMessage
-        {
-            Sender  = sender,
-            Content = content,
-            IsUser  = isUser,
-            Timestamp = DateTime.Now.ToString("HH:mm"),
-        });
-    }
-
-    private void LogTool(string toolName, string result)
-    {
-        var preview = result.Length > 60 ? result[..60] + "…" : result;
-        ToolLog.Insert(0, $"[{toolName}] {preview}");
-        if (ToolLog.Count > 10) ToolLog.RemoveAt(ToolLog.Count - 1);
-    }
-
-    private void PushRmsToWaveform(float rms)
-    {
-        // Shift bars left, push new bar on right
-        for (int i = 0; i < WaveformBars.Count - 1; i++)
-            WaveformBars[i] = WaveformBars[i + 1];
-        WaveformBars[^1] = Math.Max(4, rms * 50);
-    }
-
-    private void ResetWaveform()
-    {
-        for (int i = 0; i < WaveformBars.Count; i++)
-            WaveformBars[i] = 4;
-    }
-
-    private readonly Random _rng = new();
-    private void AnimateWaveform(object? s, EventArgs e)
-    {
-        // Idle animation when mic is on but silent
-        for (int i = 0; i < WaveformBars.Count - 1; i++)
-            WaveformBars[i] = WaveformBars[i + 1];
-        WaveformBars[^1] = 4 + _rng.NextDouble() * 6;
-    }
+    [RelayCommand] private Task Reconnect()=>Guard(Initialize);
+    [RelayCommand] private Task SendText()=>Guard(async()=>{var text=InputText.Trim();if(text.Length==0)return;await ws.SendAsync(new{type="text",content=text,tts=SpeakResponses});audio.StopPlayback();Messages.Add(new(){Sender="You",Content=text,IsUser=true});InputText="";});
+    [RelayCommand] private Task Interrupt()=>Guard(async()=>{if(turn.Length>0)blocked.Add(turn);audio.StopPlayback();await ws.SendAsync(new{type="interrupt"});});
+    [RelayCommand] private Task ToggleMic()=>Guard(async()=>{if(!audio.IsRecording){audio.StartRecording();IsListening=true;ConnectionStatus="Listening · press Voice again to send";}else{var bytes=await audio.StopRecordingAsync();IsListening=false;await ws.SendAsync(new{type="audio",audio_b64=Convert.ToBase64String(bytes),tts=SpeakResponses});}});
+    [RelayCommand] private Task ClearChat()=>Guard(async()=>{await ws.SendAsync(new{type="clear"});});
+    [RelayCommand] private Task ScreenAnalyze()=>Guard(async()=>{var picker=new OpenFileDialog{Filter="Images|*.png;*.jpg;*.jpeg;*.webp"};if(picker.ShowDialog()!=true)return;var bytes=await File.ReadAllBytesAsync(picker.FileName);if(bytes.Length>8*1024*1024)throw new InvalidOperationException("Select an image smaller than 8 MB.");await ws.SendAsync(new{type="screen",image_b64=Convert.ToBase64String(bytes),prompt="Describe this selected image."});});
+    [RelayCommand] private Task ImportDocument()=>Guard(async()=>{var picker=new OpenFileDialog{Filter="Documents|*.pdf;*.txt;*.md;*.csv;*.json;*.py;*.js;*.ts;*.cs;*.dart"};if(picker.ShowDialog()!=true)return;using var content=new MultipartFormDataContent();content.Add(new ByteArrayContent(await File.ReadAllBytesAsync(picker.FileName)),"file",Path.GetFileName(picker.FileName));using var response=await http.PostAsync("/api/documents",content);if(!response.IsSuccessStatusCode)throw new InvalidOperationException(await response.Content.ReadAsStringAsync());ConnectionStatus="Document imported";await OpenSection("Knowledge");});
+    [RelayCommand] private Task OpenSection(string name)=>Guard(async()=>{Section=name;Items.Clear();editingId="";if(name is "Assistant" or "Preferences")return;var endpoint=name switch{"Knowledge"=>"documents","Memory"=>"memories","Reminders"=>"reminders","Workflows"=>"workflows",_=>"receipts"};var data=await Api(endpoint);foreach(var item in data.GetProperty(endpoint).EnumerateArray()){var title=Text(item,"title");if(title.Length==0)title=Text(item,"text");if(title.Length==0)title=Text(item,"tool");var content=Text(item,"content");if(name=="Reminders")content=Text(item,"due_at")+" · "+Text(item,"status");if(name=="Tools")content=item.GetProperty("result").GetProperty("content").GetString()??"";Items.Add(new(Text(item,"id"),title,content));}});
+    [RelayCommand] private Task SaveRecord()=>Guard(async()=>{if(Section=="Memory")await Api("memories"+(editingId.Length>0?"/"+editingId:""),editingId.Length>0?HttpMethod.Patch:HttpMethod.Post,new{title=RecordTitle,content=RecordContent});else if(Section=="Reminders"){if(!DateTime.TryParse(ReminderTime,out var date))throw new InvalidOperationException("Use yyyy-MM-dd HH:mm for reminder time.");await Api("reminders",HttpMethod.Post,new{text=RecordTitle,due_at=new DateTimeOffset(date).ToUniversalTime().ToString("O"),timezone="Asia/Kolkata"});}else if(Section=="Workflows"){var steps=RecordContent.Split('\n',StringSplitOptions.RemoveEmptyEntries).Select(line=>{var parts=line.Split(':',2);return new{tool=parts[0].Trim(),argument=parts.Length>1?parts[1].Trim():""};}).ToArray();await Api("workflows",HttpMethod.Post,new{title=RecordTitle,steps});}else return;RecordTitle="";RecordContent="";editingId="";await OpenSection(Section);});
+    [RelayCommand] private void EditRecord(WorkspaceItem item){if(Section=="Memory"){editingId=item.Id;RecordTitle=item.Title;RecordContent=item.Content;}}
+    [RelayCommand] private Task RunWorkflow(WorkspaceItem item)=>Guard(async()=>{var result=await Api("workflows/"+item.Id+"/run",HttpMethod.Post);ConnectionStatus=string.Join(" · ",result.GetProperty("results").EnumerateArray().Select(r=>Text(r,"content")));});
+    [RelayCommand] private Task RunTool(string tool)=>Guard(async()=>{var result=await Api("tools/execute",HttpMethod.Post,new{tool,argument=RecordContent});ConnectionStatus=Text(result,"content");await OpenSection("Tools");});
+    [RelayCommand] private Task RemoveRecord(WorkspaceItem item)=>Guard(async()=>{await Api((Section=="Reminders"?"reminders/":"records/")+item.Id,HttpMethod.Delete);await OpenSection(Section);});
+    [RelayCommand] private void OpenPreferences()=>Section="Preferences";
+    [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,focus=Focus,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency});ThemeManager.Apply(Appearance);ConnectionStatus="Preferences saved";});
+    [RelayCommand] private Task Export()=>Guard(async()=>{var file=new SaveFileDialog{Filter="JSON workspace|*.json",FileName="wednesday-workspace.json"};if(file.ShowDialog()!=true)return;var data=await Api("export");await File.WriteAllTextAsync(file.FileName,JsonSerializer.Serialize(data,new JsonSerializerOptions{WriteIndented=true}));});
+    public void Dispose(){ws.Dispose();audio.Dispose();http.Dispose();}
 }

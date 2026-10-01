@@ -1,154 +1,62 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace JarvisAI.Services;
 
-/// <summary>
-/// Connects to the FastAPI /ws WebSocket endpoint.
-/// Sends text/audio messages, fires events on responses.
-/// </summary>
-public class JarvisWebSocketService : IDisposable
+public sealed class JarvisWebSocketService : IDisposable
 {
-    private const string WsUrl = "ws://localhost:8000/ws";
+    private ClientWebSocket? socket;
+    private CancellationTokenSource lifetime = new();
+    private readonly SemaphoreSlim sends = new(1,1);
+    public event Action<JsonElement>? MessageReceived;
+    public event Action<bool>? OnConnectionChanged;
+    public bool IsConnected => socket?.State == WebSocketState.Open;
 
-    private ClientWebSocket? _ws;
-    private CancellationTokenSource _cts = new();
-
-    public event Action<string, string?>? OnTextResponse;   // (text, toolUsed)
-    public event Action<string, byte[]?>? OnAudioResponse;  // (transcript, audioBytes)
-    public event Action<bool>?            OnConnectionChanged;
-
-    public bool IsConnected => _ws?.State == WebSocketState.Open;
-
-    // ------------------------------------------------------------------ //
-    //  Connect                                                             //
-    // ------------------------------------------------------------------ //
-
-    public async Task ConnectAsync()
+    public async Task ConnectAsync(Uri endpoint, string token)
     {
+        lifetime.Cancel();socket?.Dispose();lifetime.Dispose();lifetime=new();
+        var connection=new ClientWebSocket();connection.Options.SetRequestHeader("Authorization","Bearer "+token);
+        socket=connection;
         try
         {
-            _ws?.Dispose();
-            _ws = new ClientWebSocket();
-            _cts = new CancellationTokenSource();
-
-            await _ws.ConnectAsync(new Uri(WsUrl), _cts.Token);
+            await connection.ConnectAsync(endpoint,lifetime.Token);
             OnConnectionChanged?.Invoke(true);
-            _ = ReceiveLoopAsync();   // fire-and-forget receive loop
+            _=ReceiveAsync(connection,lifetime.Token);
         }
-        catch (Exception ex)
-        {
-            OnConnectionChanged?.Invoke(false);
-            Console.WriteLine($"[WS] Connect failed: {ex.Message}");
-        }
+        catch {OnConnectionChanged?.Invoke(false);throw;}
     }
 
-    // ------------------------------------------------------------------ //
-    //  Send                                                                //
-    // ------------------------------------------------------------------ //
-
-    public async Task SendTextAsync(string text)
+    public async Task SendAsync(object payload)
     {
-        if (!IsConnected) return;
-        var payload = JsonSerializer.Serialize(new { type = "text", content = text });
-        await SendRawAsync(payload);
+        if(!IsConnected)throw new InvalidOperationException("Connect the workspace before sending.");
+        await sends.WaitAsync();
+        try {await socket!.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)),WebSocketMessageType.Text,true,lifetime.Token);}
+        finally {sends.Release();}
     }
 
-    public async Task SendAudioAsync(byte[] wavBytes)
+    private async Task ReceiveAsync(ClientWebSocket connection,CancellationToken cancellation)
     {
-        if (!IsConnected) return;
-        var b64 = Convert.ToBase64String(wavBytes);
-        var payload = JsonSerializer.Serialize(new { type = "audio", audio_b64 = b64 });
-        await SendRawAsync(payload);
-    }
-
-    public async Task SendScreenAnalyzeAsync(string? prompt = null)
-    {
-        if (!IsConnected) return;
-        var payload = JsonSerializer.Serialize(new { type = "screen", prompt });
-        await SendRawAsync(payload);
-    }
-
-    public async Task SendClearAsync()
-    {
-        if (!IsConnected) return;
-        await SendRawAsync(JsonSerializer.Serialize(new { type = "clear" }));
-    }
-
-    private async Task SendRawAsync(string json)
-    {
-        var bytes = Encoding.UTF8.GetBytes(json);
-        await _ws!.SendAsync(bytes, WebSocketMessageType.Text, true, _cts.Token);
-    }
-
-    // ------------------------------------------------------------------ //
-    //  Receive loop                                                        //
-    // ------------------------------------------------------------------ //
-
-    private async Task ReceiveLoopAsync()
-    {
-        var buf = new byte[1024 * 64];
-        var sb  = new StringBuilder();
-
+        var buffer=new byte[16384];
         try
         {
-            while (_ws!.State == WebSocketState.Open)
+            while(connection.State==WebSocketState.Open)
             {
-                WebSocketReceiveResult result;
-                sb.Clear();
-
+                using var data=new MemoryStream();WebSocketReceiveResult result;
                 do
                 {
-                    result = await _ws.ReceiveAsync(buf, _cts.Token);
-                    if (result.MessageType == WebSocketMessageType.Close) goto done;
-                    sb.Append(Encoding.UTF8.GetString(buf, 0, result.Count));
-                }
-                while (!result.EndOfMessage);
-
-                HandleMessage(sb.ToString());
+                    result=await connection.ReceiveAsync(buffer,cancellation);
+                    if(result.MessageType==WebSocketMessageType.Close)return;
+                    data.Write(buffer,0,result.Count);
+                    if(data.Length>16*1024*1024)throw new InvalidDataException("Event exceeds size limit.");
+                }while(!result.EndOfMessage);
+                using var json=JsonDocument.Parse(data.ToArray());MessageReceived?.Invoke(json.RootElement.Clone());
             }
         }
-        catch { /* disconnected */ }
-
-        done:
-        OnConnectionChanged?.Invoke(false);
+        catch(OperationCanceledException){}
+        catch(WebSocketException){}
+        finally{if(ReferenceEquals(socket,connection))OnConnectionChanged?.Invoke(false);}
     }
 
-    private void HandleMessage(string raw)
-    {
-        try
-        {
-            var node = JsonNode.Parse(raw);
-            var type = node?["type"]?.GetValue<string>();
-
-            switch (type)
-            {
-                case "text":
-                case "screen":
-                    OnTextResponse?.Invoke(
-                        node?["content"]?.GetValue<string>() ?? "",
-                        node?["tool_used"]?.GetValue<string>());
-                    break;
-
-                case "audio":
-                    var text     = node?["content"]?.GetValue<string>() ?? "";
-                    var b64Audio = node?["audio_b64"]?.GetValue<string>();
-                    var audioBytes = b64Audio is not null ? Convert.FromBase64String(b64Audio) : null;
-                    OnAudioResponse?.Invoke(text, audioBytes);
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WS] Parse error: {ex.Message}");
-        }
-    }
-
-    public void Dispose()
-    {
-        _cts.Cancel();
-        _ws?.Dispose();
-    }
+    public void Dispose(){lifetime.Cancel();socket?.Dispose();lifetime.Dispose();}
 }
