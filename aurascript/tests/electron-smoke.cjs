@@ -26,7 +26,7 @@ let runningApp;
   await page.locator('#file-status').filter({hasText:'Saved · acceptance.py'}).waitFor();
   assert.equal(await fs.readFile(path.join(fixture,'acceptance.py'),'utf8'),'print("persisted")\n');
   await page.locator('#new-file').click();await page.locator('[name=name]').fill('acceptance.py');await page.locator('#dialog-submit').click();
-  await page.waitForFunction(()=>document.getElementById('toast').textContent.includes('EEXIST'));
+  await page.waitForFunction(()=>document.getElementById('toast').textContent.includes('already exists'));
   assert.equal(await fs.readFile(path.join(fixture,'acceptance.py'),'utf8'),'print("persisted")\n');
   await page.locator('#dialog-close').click();
   await page.evaluate(()=>monaco.editor.getModels().find(m=>m.uri.path.endsWith('acceptance.py')).setValue('def broken(:\n'));

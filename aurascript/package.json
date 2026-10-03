@@ -6,6 +6,7 @@
   "main": "src/main.cjs",
   "author": "Archit Singhania",
   "license": "MIT",
+  "engines": { "node": ">=22.12.0" },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -50,6 +51,7 @@
     }
   },
   "overrides": {
-    "dompurify": "3.4.16"
+    "dompurify": "3.4.16",
+    "@electron/get": "5.1.0"
   }
 }

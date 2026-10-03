@@ -11,7 +11,7 @@ Use Python 3.11 for optional ML engines; the core service is also verified on Py
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\python -m pip install -r backend\requirements-core.txt
-Copy-Item backend\.env.example backend\.env # Only when no local .env exists
+if (-not (Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
 .venv\Scripts\python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
@@ -25,7 +25,7 @@ Windows assistant:
 dotnet run --project desktop\JarvisAI.csproj
 ```
 
-AuraScript, with Node.js 22+:
+AuraScript, with Node.js 22.12 or newer:
 
 ```powershell
 cd aurascript
@@ -38,7 +38,7 @@ The editor bundles Monaco and language workers from locked dependencies. File op
 
 ## Capabilities and evidence
 
-The [20-capability matrix](docs/CAPABILITIES.md) records implementation, acceptance evidence, provider requirements, and remaining live/device checks. See [architecture](docs/ARCHITECTURE.md), [realtime contract](docs/PROTOCOL.md), and [release validation](docs/RELEASE.md).
+The [20-capability matrix](docs/CAPABILITIES.md) records implementation, acceptance evidence, provider requirements, and remaining live/device checks. The [manual testing guide](docs/MANUAL-TESTING.md) gives startup commands, actual UI paths and expected results for all twenty capabilities. See [architecture](docs/ARCHITECTURE.md), [realtime contract](docs/PROTOCOL.md), and [release validation](docs/RELEASE.md).
 
 Core automated acceptance covers owned persistence, conversation isolation, cancellation, ordered audio, source references, timezone conversion/DST gaps, selected-image cancellation, upload boundaries, real file saving, Python diagnostics, terminal processes, Git commits/diffs, workflows, exports, themes and mobile layouts. Provider contracts and ordered speech tests use explicit fixtures; live model inference, microphone hardware, optional ONNX/Whisper/Coqui engines and cross-platform installers require their own configured environments.
 

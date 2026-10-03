@@ -90,11 +90,13 @@ Fresh machine source builds require .NET 10 SDK. The self-contained release exec
 
 Repeat Memory save/edit/remove, Knowledge import, Reminders save/cancel, Time tool, explicit workflow, Preferences and JSON export. Expected: durable results in this client's separate workspace, no raw technical error payloads, clear listening/connection state, correct timezone shown in Preferences/Reminders. Set response style, language and IANA timezone and relaunch: settings persist. Try high-contrast Windows settings, keyboard tab navigation, large display scaling, both themes and reduced motion.
 
+The reminder editor suggests one hour ahead in the selected timezone, including daylight-saving changes. Blank/invalid/absolute timezone strings are rejected with a readable validation message without overwriting your last valid preference. If first-run dependency installation is interrupted, rerun the release launcher: it retries unfinished setup and repairs missing/changed core dependencies before starting the service.
+
 For voice, click Voice once to record and again to finalize/send. Input waveform reflects real samples. MP3/WAV are decoded according to the server event format. Physical device checks remain manual. The invisible render/clean-exit and synthetic WAV/MP3 decoding checks have already passed.
 
 ## 6. AuraScript editor: use a disposable Git repository
 
-Start the service, then launch AuraScript source with Node 22+:
+Start the service, then launch AuraScript source with Node 22.12 or newer:
 
 ```powershell
 Set-Location D:\remaining-4-git-projs\JarvisAI\aurascript

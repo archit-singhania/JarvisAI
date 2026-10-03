@@ -5,9 +5,9 @@ This matrix distinguishes connected implementations and executed local checks fr
 | # | Capability and connected implementation | Recorded acceptance / remaining gate |
 |---|---|---|
 | 1 | Streaming text and sentence-ordered spoken responses across browser/WPF/editor | Cancellation/order/persistence contract tests pass. Live inference and server speech require a configured engine. |
-| 2 | Multilingual transcription, finalized WAV/browser recordings, MP3/WAV playback | Unicode and ordered format handling verified; real microphone/Whisper/cloud consent remains device/provider validation. |
+| 2 | Multilingual transcription, finalized WAV/browser recordings, MP3/WAV playback | Unicode, valid ordered WAV events, and actual native WAV/MP3 decoding verified; real microphone/Whisper/cloud consent remains device/provider validation. |
 | 3 | Browser RMS microphone meter and silence-based VAD; native RMS waveform | Connected to real captured samples. Physical input and denied-microphone hardware journeys remain manual. |
-| 4 | Optional local ONNX wake-word listener with verified startup/error behavior | Requires explicitly installed model, openwakeword and PyAudio. No energy-trigger substitution or automatic model download. Live device gate open. |
+| 4 | Optional local ONNX wake-word listener with verified startup/error behavior | Private stop and concurrent startup/supersession regressions pass. Requires explicitly installed model, openwakeword and PyAudio. No energy-trigger substitution or automatic model download. Live device gate open. |
 | 5 | Active-turn interruption cancels async generation/vision and queued speech | Session and image cancellation tests pass; clients suppress interrupted turn audio. |
 | 6 | Connection-specific history/context, authenticated owned storage | Unit/API and separate fresh-browser owner isolation pass. |
 | 7 | Persistent searchable conversation sessions and restored history | SQLite restart/readback and live browser reload pass. Native/editor use their own session identities. |

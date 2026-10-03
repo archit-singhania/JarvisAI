@@ -98,6 +98,16 @@ def test_request_ids_structured_errors_and_timezone_preferences(client):
     assert malformed.json()['error']['code']=='invalid_request'
 
 
+@pytest.mark.parametrize('zone',['/invalid',' ','','../Europe/London'])
+def test_invalid_timezone_is_structured_and_does_not_replace_preferences(client,zone):
+    client.post('/api/session')
+    previous=client.get('/api/preferences').json()['timezone']
+    response=client.patch('/api/preferences',json={'timezone':zone},headers={'X-Request-ID':'timezone-validation'})
+    assert response.status_code==422
+    assert response.json()['error']['request_id']==response.headers['X-Request-ID']=='timezone-validation'
+    assert client.get('/api/preferences').json()['timezone']==previous
+
+
 def test_wake_listener_stop_is_private(client,monkeypatch):
     class Listener:
         stopped=False
@@ -112,3 +122,40 @@ def test_wake_listener_stop_is_private(client,monkeypatch):
     assert not listener.stopped
     monkeypatch.setattr(main,'wake_owner',main.store.authenticate(client.cookies['wednesday_token']))
     assert client.post('/api/wake-word/stop').status_code==200 and listener.stopped
+
+
+@pytest.mark.parametrize('failed_start',[True,False])
+def test_cancelled_wake_start_cannot_clear_another_owners_listener(client,monkeypatch,failed_start):
+    import threading
+    import sys
+    import types
+    entered=threading.Event(); release=threading.Event(); created=[]
+    class Listener:
+        def __init__(self,callback):
+            self.number=len(created); created.append(self)
+        def start(self):
+            if self.number==0:
+                entered.set()
+                if not release.wait(5):raise RuntimeError('Fixture startup timed out')
+                if failed_start:raise RuntimeError('Fixture startup failed')
+        def stop(self):pass
+    module=types.ModuleType('app.speech.wake_word'); module.WakeWordListener=Listener
+    monkeypatch.setitem(sys.modules,'app.speech.wake_word',module)
+    original_find_spec=main.importlib.util.find_spec
+    monkeypatch.setattr(main.importlib.util,'find_spec',lambda name:object() if name in {'openwakeword','pyaudio'} else original_find_spec(name))
+    monkeypatch.setattr(main.settings,'DEMO_MODE',False)
+    monkeypatch.setattr(main,'wake_listener',None); monkeypatch.setattr(main,'wake_owner',None)
+    first=client.post('/api/session').json()['token']; client.cookies.clear()
+    second=client.post('/api/session').json()['token']; client.cookies.clear()
+    responses=[]
+    worker=threading.Thread(target=lambda:responses.append(client.post('/api/wake-word/start',headers={'Authorization':'Bearer '+first})))
+    worker.start()
+    try:
+        assert entered.wait(3)
+        assert client.post('/api/wake-word/stop',headers={'Authorization':'Bearer '+first}).status_code==200
+        assert client.post('/api/wake-word/start',headers={'Authorization':'Bearer '+second}).status_code==200
+    finally:
+        release.set(); worker.join(5)
+    assert responses[0].status_code==(503 if failed_start else 409)
+    assert main.wake_listener is created[1]
+    assert main.wake_owner==main.store.authenticate(second)

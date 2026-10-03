@@ -27,7 +27,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string section="Assistant";
     [ObservableProperty] private string recordTitle="";
     [ObservableProperty] private string recordContent="";
-    [ObservableProperty] private string reminderTime=DateTime.Now.AddHours(1).ToString("yyyy-MM-dd HH:mm");
+    [ObservableProperty] private string reminderTime="";
     [ObservableProperty] private bool isListening;
     [ObservableProperty] private bool speakResponses;
     [ObservableProperty] private string focus="assistant";
@@ -47,11 +47,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        ReminderTime=ReminderClock.Suggest(ReminderZone,DateTimeOffset.UtcNow)??"";
         ws.OnConnectionChanged+=connected=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus=connected?"Workspace connected":"Disconnected · use Reconnect");
         ws.MessageReceived+=message=>Application.Current.Dispatcher.Invoke(()=>Handle(message));
         audio.OnRmsLevel+=rms=>Application.Current.Dispatcher.InvokeAsync(()=>{for(int i=0;i<31;i++)WaveformBars[i]=WaveformBars[i+1];WaveformBars[31]=Math.Max(4,rms*160);});
         audio.OnError+=error=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus="Audio: "+error);
         _=Guard(Initialize);
+    }
+
+    partial void OnReminderZoneChanged(string value)
+    {
+        var suggested=ReminderClock.Suggest(value,DateTimeOffset.UtcNow);
+        if(suggested is not null)ReminderTime=suggested;
     }
 
     private async Task<JsonElement> Api(string path,HttpMethod? method=null,object? body=null)

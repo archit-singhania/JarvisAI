@@ -46,6 +46,11 @@ public partial class App : Application
         try
         {
             var window=new MainWindow();await Task.Delay(1600);
+            var requestedSection=e.Args.FirstOrDefault(a=>a.StartsWith("--smoke-section="))?[16..];
+            if(requestedSection is "Preferences" or "Memory" or "Knowledge" or "Reminders" or "Tools" or "Workflows")
+            {
+                if(window.DataContext is MainViewModel vm)await vm.OpenSectionCommand.ExecuteAsync(requestedSection);
+            }
             var visual=(FrameworkElement)window.Content;
             visual.Measure(new Size(1220,840));visual.Arrange(new Rect(0,0,1220,840));visual.UpdateLayout();
             var target=new System.Windows.Media.Imaging.RenderTargetBitmap(1220,840,96,96,PixelFormats.Pbgra32);

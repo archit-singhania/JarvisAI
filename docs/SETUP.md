@@ -2,7 +2,7 @@
 
 ## Core
 
-Python 3.11 is the recommended environment for ML extras. The FastAPI core was verified with Python 3.12.14. Use `backend/requirements-core.txt` for document/storage/tool workflows without model downloads. `.NET 10` runs WPF; Node 22+ builds the Electron editor. Keep the ignored `.env` and local session files private.
+Python 3.11 is the recommended environment for ML extras. The FastAPI core was verified with Python 3.12.14. Use `backend/requirements-core.txt` for document/storage/tool workflows without model downloads. `.NET 10` runs WPF; Node 22.12 or newer builds the Electron editor. Keep the ignored `.env` and local session files private.
 
 `WEDNESDAY_DATA_DIR` overrides the service data directory. `WEDNESDAY_URL` selects the service URL for WPF/AuraScript. `WEDNESDAY_CLIENT_DATA` overrides WPF client state for isolated tests; `AURA_TEST_DATA` and `AURA_HEADLESS=1` isolate invisible Electron acceptance runs. These test overrides are not required for ordinary use.
 
@@ -27,3 +27,5 @@ Back up the SQLite workspace with Python's `sqlite3.Connection.backup` while the
 ## Build dependencies
 
 Use `npm ci` and `npm run prepare:editor` under `aurascript`. If npm's install-script approval configuration blocks Electron's official download, run `node node_modules/electron/install.js` in that directory after reviewing it. The maintained build compiles offline Monaco and language workers from locked ESM sources, including the patched DOMPurify override. It does not fetch scripts from a CDN at runtime.
+
+Electron's downloader is locked to the official `@electron/get` 5.1.0, which uses native fetch and avoids the older vulnerable cache-library chain. This needs Node 22.12+ for CommonJS/ESM interoperability with the maintained builder. Current dependency audit and rebuilt-package results are in RELEASE.md.

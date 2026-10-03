@@ -2,6 +2,8 @@
 
 The running service publishes HTTP OpenAPI at `/openapi.json` and an interactive reference at `/docs`. All `/api` operations after session bootstrap require the owned cookie or a Bearer credential. Writes from foreign browser origins are rejected. Native sockets can use a Bearer header; AuraScript uses `wednesday.v1` plus `token.<opaque credential>` WebSocket subprotocols.
 
+HTTP responses carry `X-Request-ID`. A bounded alphanumeric client ID can be supplied in that header; otherwise the service creates one. Error bodies retain the compatible readable `detail` and add `error: {code, message, request_id}`. Validation errors do not echo private submitted values.
+
 Connect to `/ws?conversation_id=<owned id>`. Omitting the ID creates a conversation. The first event returns saved history and preferences. All service events include:
 
 ```json
@@ -22,4 +24,4 @@ Sequence numbers increase per connection. `audio_sequence` increases per turn, s
 
 Server events: `session`, `stream_start`, `stream_chunk`, `audio_chunk`, `stream_end`, `transcript`, `stt_start`, `interrupted`, `cleared`, `context_updated`, `reminder`, `wake_detected`, `error`, `stt_error`, `speech_unavailable`. Errors carry a user-readable content and stable error code where applicable. Payload bounds: text/code 12,000 characters, audio 10 MB, selected image 8 MB, document 10 MB. Unsupported inputs fail explicitly.
 
-Fixtures are in `fixtures/events.v1.json`; ordering, cancellation and control independence have automated tests. REST operations expose owned conversations, document ingestion, memories, reminders, preferences/personas, workflows, tool receipts, provider capabilities, workspace export and language diagnostics. Reminders accept offset-aware ISO dates or local ISO dates with an IANA timezone; nonexistent DST clock times are rejected, and the resolved UTC instant remains fixed across polling.
+Fixtures are in `fixtures/events.v1.json`; its audio event contains a playable synthetic tone from `fixtures/audio`. Ordering, decoding, cancellation and control independence have automated checks. REST operations expose owned conversations, document ingestion, memories, reminders, preferences/personas/timezones, workflows, tool receipts, provider capabilities, workspace export and language diagnostics. Reminders accept offset-aware ISO dates or local ISO dates with an IANA timezone; nonexistent DST clock times are rejected, and the resolved UTC instant remains fixed across polling.

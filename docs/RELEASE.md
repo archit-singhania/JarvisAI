@@ -4,6 +4,8 @@ Local verification on Windows x64, Python 3.12.14, .NET SDK 10.0.401, installed 
 
 Executed checks cover backend ownership/persistence/cancellation and message contracts; browser memories/documents/reminders/workflows/export, two-owner isolation, theme preferences, missing-provider failure, and 390px layout; real Electron IPC, file saving, Python diagnostics, streamed terminal processes, a temporary-repo Git commit/full diff, command palette and themes; WPF release build and invisible XAML/render/clean-exit smoke. Check the latest generated acceptance records under `test-results` and recorded captures in `docs/screenshots`.
 
+Final core verification: **25 backend tests passed**, **2 Node filesystem/process tests passed**, browser application acceptance passed with zero page errors, and the **packaged AuraScript executable** passed its real save/diagnostic/terminal/Git/palette/theme journey with zero page errors. The .NET 10 Release build has **0 warnings and 0 errors**. The native production decoder reads both valid WAV and MP3 tone fixtures at 24 kHz. Launcher regressions cover interrupted dependency installation, manifest updates and repair; timezone tests cover invalid values, selected-zone defaults/DST and concurrent wake-listener ownership. `npm audit` reports zero vulnerabilities for the locked editor dependencies.
+
 Commands:
 
 ```powershell
@@ -16,9 +18,15 @@ npm audit
 npm run build:win
 ```
 
+`scripts/Smoke-Windows.ps1` checks invisible runtime/clean exit, separate light/dark renders, owned preference readback, the Preferences page, and actual WAV/MP3 decoding against a private loopback service. Use `-Executable` to check the self-contained release binary. Physical listening/playback and the interactive installer remain separate checks.
+
+The 3 October dependency refresh detected a newly reviewed cache-library advisory in the old downloader chain. The official `@electron/get` 5.1.0 override removes that dependency rather than hiding audit findings; production and full dependency audit returned zero findings after the locked install. [Advisory](https://github.com/advisories/GHSA-ch52-4w7c-c8xp). Node 22.12+ is now required. A fresh clean installation, offline editor bundling, Node tests, Electron download, Windows NSIS build and the rebuilt packaged executable's complete application journey all passed with this override. The renderer's DOMPurify remains pinned to 3.4.16.
+
 The full browser acceptance deliberately uses an engine-free service so it can verify honest provider failures. Streaming model/audio ordering unit tests use labeled fixture adapters. The screenshot and demo show actual applications and persisted operations; they are not concept mockups. Demo inputs are acceptance fixtures.
 
 Windows artifacts: NSIS installer under `aurascript/dist`; WPF self-contained package under `release`. The source bundle excludes real `.env`, session credentials, user data, downloaded models and generated Python environments. Packages are unsigned unless a signing identity is configured. Installer construction and extracted executable relaunch are separate checks; installer UI installation/device audio should be checked before distribution to other users.
+
+The previously tracked private `backend/.env` is removed from the Git index and retained on disk. Populated provider values from historical commits require account-owner rotation; current untracking and secret-free packaging do not erase that history.
 
 Open release gates: live local/cloud LLM responses and code review; actual microphone capture and playback on reference devices; optional Whisper/Coqui/ONNX model installation; macOS/Linux package execution; Docker/host deployment, HTTPS, production backup/recovery; provider/account credentials and chosen public hosting destinations. The configured CI workflow has not been run remotely because this work has not been pushed.
 

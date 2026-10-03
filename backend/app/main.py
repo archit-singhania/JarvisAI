@@ -187,10 +187,12 @@ def get_preferences(identity=Depends(owner)):
 
 @app.patch('/api/preferences')
 def preferences(body: Preferences,identity=Depends(owner)):
-    if body.timezone:
+    if body.timezone is not None:
         try:
+            if not body.timezone or body.timezone != body.timezone.strip():
+                raise ValueError('Timezone cannot be blank or padded with whitespace')
             ZoneInfo(body.timezone)
-        except ZoneInfoNotFoundError:
+        except (ZoneInfoNotFoundError, ValueError, OSError):
             raise HTTPException(422,'Choose a valid IANA timezone, such as Asia/Kolkata or Europe/London')
     return store.prefs(identity,body.model_dump(exclude_none=True))
 
@@ -431,14 +433,19 @@ async def wake_word(action: Literal['start','stop'],identity=Depends(owner)):
             if runtime.owner==identity:
                 await runtime.interrupt()
                 await runtime.send('wake_detected')
-    wake_listener = WakeWordListener(lambda:loop.call_soon_threadsafe(lambda:loop.create_task(notify())))
+    listener = WakeWordListener(lambda:loop.call_soon_threadsafe(lambda:loop.create_task(notify())))
+    wake_listener = listener
     wake_owner = identity
     try:
-        await asyncio.to_thread(wake_listener.start)
+        await asyncio.to_thread(listener.start)
     except Exception as error:
-        wake_listener = None
-        wake_owner = None
+        if wake_listener is listener:
+            wake_listener = None
+            wake_owner = None
         raise HTTPException(503,'Wake-word model or microphone could not start. Install its ONNX model and allow microphone access.') from error
+    if wake_listener is not listener:
+        listener.stop()
+        raise HTTPException(409,'This listener was stopped before startup completed; start it again when ready.')
     return {'active':True,'detail':'Local wake-word model and microphone are active'}
 
 

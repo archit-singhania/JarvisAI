@@ -17,6 +17,7 @@ jobs:
         working-directory: aurascript
       - run: python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8006 > /tmp/wednesday.log 2>&1 &
         env: {WEDNESDAY_DATA_DIR: /tmp/wednesday-acceptance, ALLOWED_ORIGINS: 'http://127.0.0.1:8006,aura://app'}
+      - run: python scripts/Wait-Local-Service.py
       - run: node tests/browser-smoke.cjs
         working-directory: aurascript
         env: {PLAYWRIGHT_CHANNEL: chromium}
@@ -30,6 +31,24 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with: {dotnet-version: '10.0.x'}
       - run: dotnet build desktop/JarvisAI.csproj -c Release
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r backend/requirements-core.txt
+      - name: Start private acceptance API
+        shell: pwsh
+        env: {WEDNESDAY_DATA_DIR: '${{ runner.temp }}/wednesday-acceptance', ALLOWED_ORIGINS: 'http://127.0.0.1:8006,aura://app'}
+        run: |
+          Start-Process -FilePath python -ArgumentList '-m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8006' -WorkingDirectory $PWD -WindowStyle Hidden
+          python scripts/Wait-Local-Service.py
+      - name: Native render and audio acceptance
+        shell: pwsh
+        env: {WEDNESDAY_CLIENT_DATA: '${{ runner.temp }}/wednesday-native', WEDNESDAY_URL: 'http://127.0.0.1:8006', WEDNESDAY_SMOKE_LOG: '${{ runner.temp }}/wednesday-native-errors.log'}
+        run: |
+          $taskBinary = "$PWD/desktop/bin/Release/net10.0-windows/JarvisAI.exe"
+          $taskRender = Start-Process -FilePath $taskBinary -ArgumentList "--smoke=$PWD/test-results/wpf-desktop.png" -WindowStyle Hidden -Wait -PassThru
+          if($taskRender.ExitCode -ne 0){throw 'WPF render acceptance failed'}
+          $taskAudio = Start-Process -FilePath $taskBinary -ArgumentList "--audio-check=$PWD/fixtures/audio" -WindowStyle Hidden -Wait -PassThru
+          if($taskAudio.ExitCode -ne 0){throw 'Native audio acceptance failed'}
       - uses: actions/setup-node@v4
         with: {node-version: '22', cache: npm, cache-dependency-path: aurascript/package-lock.json}
       - run: npm ci
@@ -40,5 +59,15 @@ jobs:
         working-directory: aurascript
       - run: npm run build:win
         working-directory: aurascript
+      - run: node tests/electron-smoke.cjs
+        working-directory: aurascript
+        env: {AURA_EXECUTABLE: '${{ github.workspace }}/aurascript/dist/win-unpacked/AuraScript.exe', WEDNESDAY_URL: 'http://127.0.0.1:8006'}
+      - run: ./scripts/Package-Windows.ps1
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with: {name: aurascript-windows, path: 'aurascript/dist/*.exe'}
+      - uses: actions/upload-artifact@v4
+        with: {name: wednesday-windows, path: 'release/*.zip'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: windows-evidence, path: 'test-results'}
