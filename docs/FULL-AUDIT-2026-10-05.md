@@ -11,3 +11,5 @@ Manual primary journey: launch core → save/edit memory → import/search notes
 Appearance: graphite or pearl with silver/violet glass rail, action island, sheets and composer, calm typography and an original orb. Actual source/native/package captures are copied into `docs/screenshots`; browser and editor records under `test-results` retain exact acceptance provenance.
 
 October5 Ollama was unavailable and the earlier local CLI/model manifests were absent. Start/install your chosen model explicitly for fresh live inference. Optional wake-word, Whisper/Coqui/vision engines, cloud keys, hardware, notification interaction, signed installer acceptance and other OS packages remain manual/platform gates. No invented performance/accuracy/user/revenue measurements. Public deployment is deferred.
+
+Repository hygiene: removed `backend/.env` from the Git index while retaining the ignored private local file and all runtime configuration. It is excluded from release packages. Any credentials previously present in Git history require account-owner rotation before source publication; no secret values were printed or changed, and history was not rewritten.
