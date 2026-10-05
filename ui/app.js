@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {owner:null, conversation:null, socket:null, preferences:{}, view:'chat', message:null, turn:null, blocked:new Set(), reconnect:null, recording:null, audio:null, queue:[], objectUrl:null};
+const state = {owner:null, conversation:null, socket:null, preferences:{}, view:'chat', message:null, turn:null, blocked:new Set(), reconnect:null, recording:null, acquiring:false, audio:null, queue:[], objectUrl:null};
 const titles = {chat:'Assistant',knowledge:'Knowledge',memory:'Memory',reminders:'Reminders',tools:'Tools & workflows',settings:'Preferences'};
 let toastTimer;
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500);}
@@ -15,7 +15,7 @@ function element(tag,className,text){const node=document.createElement(tag);if(c
 function button(text,action,className='quiet'){const node=element('button',className,text);node.type='button';node.addEventListener('click',()=>Promise.resolve(action()).catch(error=>toast(error.message,true)));return node;}
 function applyPreferences(){
   const p=state.preferences;document.documentElement.dataset.theme=p.theme==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):p.theme||'dark';
-  document.documentElement.dataset.reduceMotion=String(!!p.reduce_motion);document.documentElement.dataset.reduceTransparency=String(!!p.reduce_transparency);$('focus').value=p.focus||'assistant';
+  document.documentElement.dataset.reduceMotion=String(!!p.reduce_motion);document.documentElement.dataset.reduceTransparency=String(!!p.reduce_transparency);document.documentElement.dataset.highContrast=String(!!p.high_contrast);$('focus').value=p.focus||'assistant';
 }
 async function savePreferences(patch){state.preferences=await api('preferences',json('PATCH',patch));applyPreferences();}
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(state.preferences.theme==='system')applyPreferences();});
@@ -73,7 +73,7 @@ async function refreshHistory(){
   try{const {conversations}=await api('conversations?q='+encodeURIComponent($('history-search').value));$('history-list').replaceChildren();conversations.forEach(c=>{$('history-list').append(button(c.title,()=>{state.conversation=c.id;showView('chat');connect();},'history-item'+(c.id===state.conversation?' selected':'')));});}catch(error){toast(error.message,true);}
 }
 async function newConversation(){await interrupt();const conversation=await api('conversations',json('POST',{mode:state.preferences.focus||'assistant'}));state.conversation=conversation.id;showView('chat');connect();}
-async function interrupt(){if(state.turn)state.blocked.add(state.turn);stopAudio();send({type:'interrupt'});setActivity('Ready when you are');}
+async function interrupt(){if(state.acquiring)state.acquiring=false;if(state.recording){state.recording.cancelled=true;if(state.recording.recorder.state==='recording')state.recording.recorder.stop();}if(state.turn)state.blocked.add(state.turn);stopAudio();send({type:'interrupt'});setActivity('Ready when you are');}
 function intro(title,description){const node=element('div','panel-intro');node.append(element('h2','',title),element('p','',description));return node;}
 function empty(text){return element('div','empty',text);}
 function card(title,content,detail,actions=[]){const node=element('article','card');node.append(element('h3','',title),element('p','',content));if(detail)node.append(element('small','',detail));const toolbar=element('div','card-actions');actions.forEach(b=>toolbar.append(b));node.append(toolbar);return node;}
@@ -110,25 +110,27 @@ async function showView(view){
       const caps=await api('capabilities');const p=state.preferences;panel.replaceChildren(intro('Make it feel like yours.','Choose an engine, a focus, and an appearance. Cloud providers require backend API keys; local inference requires a running Ollama model.'));
       const form=element('form','settings-form card');const grid=element('div','settings-grid');
       grid.append(field('Appearance','theme','text',p.theme,[['system','System'],['light','Pearl'],['dark','Graphite']]),field('Default focus','focus','text',p.focus,[['assistant','Assistant'],['coding','Coding'],['research','Research'],['focus','Focus']]),field('Model provider','llm_provider','text',p.llm_provider,[['ollama','Ollama · local'],['groq','Groq'],['openai','OpenAI'],['gemini','Gemini']]),field('Local model name','ollama_model','text',p.ollama_model),field('Cloud model name','llm_model','text',p.llm_model),field('Reminder timezone · IANA name','timezone','text',p.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone),field('Speech language code','language','text',p.language),field('Response style · optional','persona','textarea',p.persona||''));form.append(grid);
-      [['reduce_motion','Reduce motion'],['reduce_transparency','Reduce transparency'],['tts','Speak responses using configured server speech']].forEach(([name,label])=>{const line=element('label','check-field');const input=element('input');input.type='checkbox';input.name=name;input.checked=!!p[name];line.append(input,document.createTextNode(label));form.append(line);});
-      const save=element('button','primary','Save preferences');save.type='submit';form.append(save);form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const data=Object.fromEntries(new FormData(form));['reduce_motion','reduce_transparency','tts'].forEach(k=>data[k]=form.elements[k].checked);await savePreferences(data);toast('Preferences saved.');}catch(error){toast(error.message,true);}finally{save.disabled=false;}};panel.append(form);
+      [['reduce_motion','Reduce motion'],['reduce_transparency','Reduce transparency'],['high_contrast','High contrast'],['tts','Speak responses using configured server speech']].forEach(([name,label])=>{const line=element('label','check-field');const input=element('input');input.type='checkbox';input.name=name;input.checked=!!p[name];line.append(input,document.createTextNode(label));form.append(line);});
+      const save=element('button','primary','Save preferences');save.type='submit';form.append(save);form.onsubmit=async event=>{event.preventDefault();save.disabled=true;try{const data=Object.fromEntries(new FormData(form));['reduce_motion','reduce_transparency','high_contrast','tts'].forEach(k=>data[k]=form.elements[k].checked);await savePreferences(data);toast('Preferences saved.');}catch(error){toast(error.message,true);}finally{save.disabled=false;}};panel.append(form);
       const status=element('div','card status-list');status.style.marginTop='18px';status.append(element('h3','','Engine availability'));Object.entries(caps.llm).forEach(([name,engine])=>{const row=element('div','status-row');row.append(element('strong','',name),element('span',engine.available?'available':'',engine.available?'Configured':'Unavailable'));status.append(row);if(engine.detail)status.append(element('p','',engine.detail));});status.append(element('p','',`Server speech: ${caps.speech.provider} · Retrieval: ${caps.retrieval}`));status.append(button('Start local wake-word listener',async()=>{const result=await api('wake-word/start',{method:'POST'});toast(result.detail);}));status.append(button('Stop wake-word listener',()=>api('wake-word/stop',{method:'POST'})));panel.append(status);
     }
   }catch(error){panel.replaceChildren(empty(error.message));toast(error.message,true);}
 }
 async function toggleRecording(){
-  if(state.recording){state.recording.recorder.stop();return;}
+  if(state.acquiring){state.acquiring=false;setActivity('Microphone request cancelled');return;}
+  if(state.recording){if(state.recording.recorder.state==='recording')state.recording.recorder.stop();return;}
   if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined')throw new Error('Voice recording requires a supported browser on HTTPS or localhost.');
-  await interrupt();const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+  await interrupt();if(state.acquiring)return;state.acquiring=true;setActivity('Waiting for microphone permission…','listening');let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});}catch(error){state.acquiring=false;setActivity('Microphone permission was not granted');throw error;}
+  if(!state.acquiring){stream.getTracks().forEach(track=>track.stop());return;}state.acquiring=false;
   const supported=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(type=>MediaRecorder.isTypeSupported(type));
   const recorder=new MediaRecorder(stream,supported?{mimeType:supported}:undefined),chunks=[];
   const context=new (window.AudioContext||window.webkitAudioContext)(),analyser=context.createAnalyser();context.createMediaStreamSource(stream).connect(analyser);analyser.fftSize=512;
-  state.recording={recorder,stream,context};$('mic').textContent='■';$('mic').setAttribute('aria-label','Stop and send voice recording');setActivity('Listening… speak naturally','listening');
+  const recording={recorder,stream,context,cancelled:false};state.recording=recording;$('mic').textContent='■';$('mic').setAttribute('aria-label','Stop and send voice recording');setActivity('Listening… speak naturally','listening');
   recorder.ondataavailable=event=>{if(event.data.size)chunks.push(event.data);};
   const samples=new Float32Array(analyser.fftSize);let spoken=false,silence=0;const started=performance.now();
   const meter=setInterval(()=>{analyser.getFloatTimeDomainData(samples);const rms=Math.sqrt(samples.reduce((s,x)=>s+x*x,0)/samples.length);document.querySelector('.orb').style.transform=`scale(${1+Math.min(rms*2,.12)})`;if(rms>.025){spoken=true;silence=0;}else if(spoken)silence+=100;if(silence>=1600||performance.now()-started>45000)if(recorder.state==='recording')recorder.stop();},100);
   recorder.onstop=async()=>{clearInterval(meter);stream.getTracks().forEach(track=>track.stop());await context.close();state.recording=null;$('mic').textContent='♩';$('mic').setAttribute('aria-label','Record voice message');document.querySelector('.orb').style.transform='';
-    const blob=new Blob(chunks,{type:recorder.mimeType});if(blob.size<500){setActivity('Recording was too short');return;}const reader=new FileReader();reader.onload=()=>send({type:'audio',audio_b64:reader.result.split(',')[1],language:state.preferences.language||'en',tts:!!state.preferences.tts});reader.readAsDataURL(blob);setActivity('Processing your voice…','thinking');};recorder.start();
+    if(recording.cancelled){setActivity('Ready when you are');return;}const blob=new Blob(chunks,{type:recorder.mimeType});if(blob.size<500){setActivity('Recording was too short');return;}const reader=new FileReader();reader.onload=()=>send({type:'audio',audio_b64:reader.result.split(',')[1],language:state.preferences.language||'en',tts:!!state.preferences.tts});reader.readAsDataURL(blob);setActivity('Processing your voice…','thinking');};recorder.start();
 }
 async function uploadDocument(file){if(!file)return;const body=new FormData();body.append('file',file);$('attachment-note').hidden=false;$('attachment-note').textContent='Importing '+file.name+'…';try{const result=await api('documents',{method:'POST',body});toast(result.title+' added to your knowledge.');if(state.view==='knowledge')showView('knowledge');}finally{$('attachment-note').hidden=true;$('document-input').value='';}}
 async function uploadImage(file){if(!file)return;if(file.size>8*1024*1024)throw new Error('Select an image smaller than 8 MB.');await interrupt();const reader=new FileReader();reader.onload=()=>{if(send({type:'screen',image_b64:reader.result.split(',')[1],prompt:$('prompt').value||'Describe this selected image and help me understand it.'})){addMessage('user','Selected image: '+file.name);setActivity('Inspecting the selected image…','thinking');}};reader.readAsDataURL(file);$('screen-input').value='';}
@@ -149,3 +151,17 @@ $('dialog-close').onclick=$('dialog-cancel').onclick=()=>$('editor-dialog').clos
 document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='n'){event.preventDefault();newConversation().catch(error=>toast(error.message,true));}if(event.key==='Escape')interrupt();if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('history-search').focus();}});
 async function boot(){try{const session=await api('session',{method:'POST'});state.owner=session.owner_id;state.preferences=session.preferences;applyPreferences();state.conversation=localStorage.getItem('wednesday-conversation-'+state.owner);if(state.conversation){try{await api('conversations/'+state.conversation);}catch{state.conversation=null;}}connect();await refreshHistory();if(new URLSearchParams(location.search).get('view')==='settings')showView('settings');}catch(error){toast(error.message,true);$('connection-label').textContent='Service unavailable';}}
 boot();
+
+// Pointer highlights update only the floating interaction material, at most once per frame.
+(() => {
+  let frame=0, point;
+  const enabled=()=>!matchMedia('(prefers-reduced-motion: reduce)').matches && document.documentElement.dataset.reduceMotion!=='true';
+  document.addEventListener('pointermove',event=>{
+    if(!enabled())return;
+    const surface=event.target.closest('.glass,.topbar,.rail,.chat-composer,dialog,.header-actions');
+    if(!surface)return;
+    point={surface,x:event.clientX,y:event.clientY};
+    if(frame)return;
+    frame=requestAnimationFrame(()=>{frame=0;const {surface,x,y}=point;const rect=surface.getBoundingClientRect();if(!rect.width||!rect.height)return;surface.style.setProperty('--glass-x',`${Math.round((x-rect.left)/rect.width*100)}%`);surface.style.setProperty('--glass-y',`${Math.round((y-rect.top)/rect.height*100)}%`);});
+  },{passive:true});
+})();

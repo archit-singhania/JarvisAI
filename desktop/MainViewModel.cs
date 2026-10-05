@@ -40,6 +40,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string reminderZone="Asia/Kolkata";
     [ObservableProperty] private bool reduceMotion;
     [ObservableProperty] private bool reduceTransparency;
+    [ObservableProperty] private bool highContrast;
     private string editingId="";
     public ObservableCollection<ChatMessage> Messages{get;}=[];
     public ObservableCollection<WorkspaceItem> Items{get;}=[];
@@ -79,7 +80,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         token=newToken;http.DefaultRequestHeaders.Authorization=new("Bearer",token);
         if(conversation.Length>0){try{await Api("conversations/"+conversation);}catch{conversation="";}}
         var p=session.GetProperty("preferences");SpeakResponses=p.GetProperty("tts").GetBoolean();Focus=p.GetProperty("focus").GetString()??"assistant";
-        Appearance=Text(p,"theme");ModelProvider=Text(p,"llm_provider");LocalModel=Text(p,"ollama_model");CloudModel=Text(p,"llm_model");Language=Text(p,"language");Persona=Text(p,"persona");ReminderZone=Text(p,"timezone");ReduceMotion=p.GetProperty("reduce_motion").GetBoolean();ReduceTransparency=p.GetProperty("reduce_transparency").GetBoolean();ThemeManager.Apply(Appearance);
+        Appearance=Text(p,"theme");ModelProvider=Text(p,"llm_provider");LocalModel=Text(p,"ollama_model");CloudModel=Text(p,"llm_model");Language=Text(p,"language");Persona=Text(p,"persona");ReminderZone=Text(p,"timezone");ReduceMotion=p.GetProperty("reduce_motion").GetBoolean();ReduceTransparency=p.GetProperty("reduce_transparency").GetBoolean();HighContrast=p.TryGetProperty("high_contrast",out var contrast)&&contrast.GetBoolean();ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast);
         await Connect();
     }
 
@@ -128,7 +129,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand] private Task RunTool(string tool)=>Guard(async()=>{var result=await Api("tools/execute",HttpMethod.Post,new{tool,argument=RecordContent});ConnectionStatus=Text(result,"content");await OpenSection("Tools");});
     [RelayCommand] private Task RemoveRecord(WorkspaceItem item)=>Guard(async()=>{await Api((Section=="Reminders"?"reminders/":"records/")+item.Id,HttpMethod.Delete);await OpenSection(Section);});
     [RelayCommand] private void OpenPreferences()=>Section="Preferences";
-    [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,focus=Focus,persona=Persona,timezone=ReminderZone,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency});ThemeManager.Apply(Appearance);ConnectionStatus="Preferences saved";});
+    [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,focus=Focus,persona=Persona,timezone=ReminderZone,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency,high_contrast=HighContrast});ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast);ConnectionStatus="Preferences saved";});
     [RelayCommand] private Task Export()=>Guard(async()=>{var file=new SaveFileDialog{Filter="JSON workspace|*.json",FileName="wednesday-workspace.json"};if(file.ShowDialog()!=true)return;var data=await Api("export");await File.WriteAllTextAsync(file.FileName,JsonSerializer.Serialize(data,new JsonSerializerOptions{WriteIndented=true}));});
     public void Dispose(){if(disposed)return;disposed=true;ws.Dispose();audio.Dispose();http.Dispose();}
 }

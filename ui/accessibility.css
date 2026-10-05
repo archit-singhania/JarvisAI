@@ -2,3 +2,17 @@
 .toast{width:max-content;min-width:min(300px,calc(100vw - 40px))}
 @media(max-width:700px){.toast{bottom:110px;width:calc(100% - 40px);max-width:550px}.composer-toolbar{gap:4px}.composer-left{gap:0}}
 @media(prefers-contrast:more){:root{--muted:var(--text);--line:currentColor}.glass{backdrop-filter:none;background:var(--surface)}}
+
+/* Original glass chrome inspired by Liquid Glass materials, with bounded blur. */
+:root{--glass-rim:#eae2ff42;--glass-glint:#ffffff19}
+html[data-theme=light]{--glass-rim:#ffffffed;--glass-glint:#ffffffa1}
+body{background:radial-gradient(ellipse at 70% 16%,#9277de13,transparent 52%),radial-gradient(ellipse at 0% 80%,#74b6c20a,transparent 55%),var(--bg)}
+.glass,dialog,.header-actions{background:radial-gradient(ellipse at var(--glass-x,22%) var(--glass-y,0%),var(--glass-glint),transparent 65%),var(--glass);border:1px solid var(--glass-rim);backdrop-filter:blur(18px) saturate(145%);-webkit-backdrop-filter:blur(18px) saturate(145%);box-shadow:inset 0 1px #ffffff27,inset 0 -1px #ae9bd51a,var(--shadow)}
+.header-actions{padding:6px 10px;border-radius:18px;gap:10px}
+.nav.active{background:linear-gradient(145deg,var(--glass-glint),transparent),var(--glass);border:1px solid var(--glass-rim);box-shadow:inset 0 1px #ffffff25,0 3px 10px #0001}
+.composer:focus-within{border-color:var(--accent)}
+html[data-reduce-transparency=true] :is(.glass,dialog,.header-actions,.nav.active),html[data-high-contrast=true] :is(.glass,dialog,.header-actions,.nav.active){backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--surface);box-shadow:none;border-color:var(--line)}
+html[data-high-contrast=true]{--muted:var(--text);--line:var(--text)}
+html[data-high-contrast=true] button{border:1px solid var(--text)}
+@media(prefers-reduced-transparency:reduce),(prefers-contrast:more){:is(.glass,dialog,.header-actions,.nav.active){backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--surface);box-shadow:none;border-color:var(--line)}}
+@media(max-width:700px){.header-actions{gap:4px;padding:4px}.rail{padding-bottom:max(7px,env(safe-area-inset-bottom))}.nav{min-height:48px}.composer-wrap{padding-bottom:env(safe-area-inset-bottom)}}

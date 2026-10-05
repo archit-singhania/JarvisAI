@@ -165,3 +165,9 @@ npm.cmd audit
 Application tests use a separate engine-free backend on port 8006 and private `WEDNESDAY_DATA_DIR`; its allowed origin must include `http://127.0.0.1:8006,aura://app`. With Playwright/Chrome installed, run `node tests/browser-smoke.cjs` and `node tests/electron-smoke.cjs`. `RECORD_DEMO=1` records the paced browser test. To test the packaged editor set `AURA_EXECUTABLE` to the absolute `dist/win-unpacked/AuraScript.exe` path. Do not set test data to your normal workspace.
 
 Recorded acceptance and remaining platform/provider gates are in [CAPABILITIES.md](CAPABILITIES.md) and [RELEASE.md](RELEASE.md). The final plan does not mark unrun live speech/inference, macOS/Linux packaging, reference-device frame rate, signed installation, public deployment, backups or experimental models as passed.
+
+## Refreshed glass interfaces
+
+Expect graphite/pearl surfaces, silver/violet highlights, an original moon mark and assistant orb. Browser rail, mobile dock, composer, header actions and dialogs carry the glass material; transcripts and records remain readable. Windows uses native layered gradient materials on navigation, controls and the composer. Preferences → High contrast, Reduce transparency and Reduce motion persist in browser, WPF and the maintained editor. Large text and compact browser navigation remain accessible.
+
+If microphone permission is pending, press the microphone button again or Stop: a late grant releases its tracks rather than starting an unwanted recording. A denied grant allows another deliberate request. The full physical recording/transcription/playback check still needs your hardware and selected speech engine.

@@ -129,7 +129,7 @@ class Workspace:
         return [r[1] for r in sorted(ranked, key=lambda x: x[0], reverse=True)[:limit]]
 
     def prefs(self, owner, patch=None):
-        defaults = {'theme': 'system', 'reduce_motion': False, 'reduce_transparency': False, 'focus': 'assistant', 'persona':'', 'language': 'en', 'timezone':'Asia/Kolkata', 'tts': False, 'llm_provider':'ollama', 'llm_model':'llama-3.1-8b-instant', 'ollama_model':'llama3.1:8b'}
+        defaults = {'theme': 'system', 'reduce_motion': False, 'reduce_transparency': False, 'high_contrast': False, 'focus': 'assistant', 'persona':'', 'language': 'en', 'timezone':'Asia/Kolkata', 'tts': False, 'llm_provider':'ollama', 'llm_model':'llama-3.1-8b-instant', 'ollama_model':'llama3.1:8b'}
         with self.db() as db:
             row = db.execute('SELECT value FROM preferences WHERE owner=?', (owner,)).fetchone()
             defaults.update(json.loads(row['value']) if row else {})

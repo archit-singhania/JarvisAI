@@ -170,6 +170,7 @@ class Preferences(BaseModel):
     theme: Literal['system','light','dark'] | None = None
     reduce_motion: bool | None = None
     reduce_transparency: bool | None = None
+    high_contrast: bool | None = None
     focus: Literal['assistant','coding','research','focus'] | None = None
     persona: str | None = Field(default=None,max_length=2000)
     language: str | None = Field(default=None,max_length=20)
