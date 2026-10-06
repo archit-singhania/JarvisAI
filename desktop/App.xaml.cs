@@ -46,6 +46,8 @@ public partial class App : Application
         try
         {
             var window=new MainWindow();await Task.Delay(1600);
+            var motionPath=e.Args.FirstOrDefault(a=>a.StartsWith("--motion-check="))?[15..];
+            if(motionPath is not null){var motionResult=await window.VerifyMotionAsync();File.WriteAllText(Path.GetFullPath(motionPath),System.Text.Json.JsonSerializer.Serialize(motionResult,new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));}
             var requestedSection=e.Args.FirstOrDefault(a=>a.StartsWith("--smoke-section="))?[16..];
             if(requestedSection is "Preferences" or "Memory" or "Knowledge" or "Reminders" or "Tools" or "Workflows")
             {
@@ -59,7 +61,7 @@ public partial class App : Application
             var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(target));
             var path=Path.GetFullPath(output[8..]);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             using(var file=File.Create(path))encoder.Save(file);
-            (window.DataContext as MainViewModel)?.Dispose();Shutdown(0);
+            window.Release();Shutdown(0);
         }
         catch(Exception error){SmokeLog(error.ToString());Shutdown(1);}
     }
@@ -76,7 +78,7 @@ public sealed class SectionVisibilityConverter:IValueConverter
 }
 public static class ThemeManager
 {
-    public static void Apply(string theme,bool reduceTransparency=false,bool highContrastPreference=false)
+    public static void Apply(string theme,bool reduceTransparency=false,bool highContrastPreference=false,string palette="amethyst")
     {
         if(SystemParameters.HighContrast||highContrastPreference)
         {
@@ -91,6 +93,8 @@ public static class ThemeManager
         bool light=theme=="light";
         if(theme=="system")light=Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize","AppsUseLightTheme",0) is int value&&value==1;
         var colors=light?new Dictionary<string,string>{{"BgDeep","#F3F1EC"},{"BgPanel","#FFFEFA"},{"BgCard","#EAE8EF"},{"TextPrimary","#242B3D"},{"TextSecondary","#626C80"},{"AccentCyan","#6B54AA"},{"BorderBrush","#D0CCDD"}}:new Dictionary<string,string>{{"BgDeep","#10131D"},{"BgPanel","#191E2B"},{"BgCard","#252B3C"},{"TextPrimary","#F2F0EB"},{"TextSecondary","#ACB2C5"},{"AccentCyan","#C5B8FA"},{"BorderBrush","#404860"}};
+        if(palette=="lagoon")colors["AccentCyan"]=light?"#286C70":"#9EDBD1";
+        else if(palette=="ember")colors["AccentCyan"]=light?"#8C5133":"#ECC3AA";
         foreach(var item in colors)Application.Current.Resources[item.Key]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Value));
         Brush Material(string opaque,string top,string baseColor) => reduceTransparency
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString(opaque))
@@ -101,6 +105,6 @@ public static class ThemeManager
         Application.Current.Resources["GlassPanel"]=Material(colors["BgPanel"],light?"#FAFFFFFF":"#EC3E415B",light?"#D9F8F6F2":"#D51D2231");
         Application.Current.Resources["GlassControl"]=Material(colors["BgCard"],light?"#FAFFFFFF":"#EC4B4E67",light?"#E0EAE8EF":"#D52D3347");
         Application.Current.Resources["GlassRim"]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(reduceTransparency?colors["BorderBrush"]:light?"#FFFFFFFF":"#88A3A8C4"));
-        Application.Current.Resources["OrbMaterial"]=reduceTransparency?new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors["AccentCyan"])):new RadialGradientBrush(new GradientStopCollection{new((Color)ColorConverter.ConvertFromString("#FFF9EE"),0),new((Color)ColorConverter.ConvertFromString(light?"#CABBDD":"#B9A5DF"),0.5),new((Color)ColorConverter.ConvertFromString(light?"#99AAC0":"#667697"),1)}){GradientOrigin=new Point(0.3,0.2)};
+        Application.Current.Resources["OrbMaterial"]=reduceTransparency?new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors["AccentCyan"])):new RadialGradientBrush(new GradientStopCollection{new((Color)ColorConverter.ConvertFromString("#FFF9EE"),0),new((Color)ColorConverter.ConvertFromString(palette=="lagoon"?"#89C6BD":palette=="ember"?"#D9AB90":light?"#CABBDD":"#B9A5DF"),0.5),new((Color)ColorConverter.ConvertFromString(light?"#99AAC0":"#667697"),1)}){GradientOrigin=new Point(0.3,0.2)};
     }
 }

@@ -16,8 +16,10 @@ def client(tmp_path,monkeypatch):
 def test_owned_roundtrip_upload_edit_and_export(client):
     assert client.get('/api/memories').status_code==401
     session=client.post('/api/session').json()
-    assert client.patch('/api/preferences',json={'high_contrast':True,'reduce_transparency':True}).json()['high_contrast'] is True
+    assert client.patch('/api/preferences',json={'high_contrast':True,'reduce_transparency':True,'palette':'lagoon'}).json()['high_contrast'] is True
     assert client.get('/api/preferences').json()['reduce_transparency'] is True
+    assert client.get('/api/preferences').json()['palette']=='lagoon'
+    assert client.patch('/api/preferences',json={'palette':'unknown'}).status_code==422
     conversation=client.post('/api/conversations',json={}).json()
     memory=client.post('/api/memories',json={'title':'Focus','content':'Violet is my project.'}).json()
     assert client.patch('/api/memories/'+memory['id'],json={'title':'Focus','content':'Violet uses Python.'}).status_code==200

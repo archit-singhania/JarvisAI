@@ -1,0 +1,22 @@
+/* Wednesday's finite motion language: the orb responds to real work. */
+:root{--ease:cubic-bezier(.2,.8,.2,1);--orb-tint:#ac99d2;--accent-on:#fff}
+html[data-palette=lagoon]{--accent:#9edbd1;--accent-solid:#306f73;--champagne:#b4cddb;--orb-tint:#82c9c1}
+html[data-theme=light][data-palette=lagoon]{--accent:#286c70;--accent-solid:#2f6e73;--champagne:#536f7a;--orb-tint:#78b8b2}
+html[data-palette=ember]{--accent:#ecc3aa;--accent-solid:#986347;--champagne:#d8c7b2;--orb-tint:#c58e75}
+html[data-theme=light][data-palette=ember]{--accent:#8c5133;--accent-solid:#8e573a;--champagne:#7b6654;--orb-tint:#b9856c}
+button,input,textarea,select{transition:background-color 150ms var(--ease),border-color 150ms var(--ease),box-shadow 150ms var(--ease),transform 150ms var(--ease),color 150ms var(--ease)}
+button:hover:not(:disabled){box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 26%,transparent)}
+button:active:not(:disabled){transform:translateY(1px) scale(.985)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.view,.message{animation:none}.orb{animation:none!important;isolation:isolate;background:radial-gradient(circle at 30% 18%,#fff9eecc,transparent 33%),radial-gradient(ellipse at 76% 72%,color-mix(in srgb,var(--orb-tint) 50%,transparent),transparent 60%),radial-gradient(circle at 50% 50%,color-mix(in srgb,var(--orb-tint) 68%,transparent),#40496038 72%)}
+.orb:before{content:"";position:absolute;inset:-12px;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 24%,transparent);border-top-color:var(--accent);opacity:0;transition:opacity 200ms var(--ease),inset 260ms var(--ease);transform:rotate(-35deg)}
+body[data-state=thinking] .orb:before,body[data-state=listening] .orb:before{opacity:.8;inset:-9px}
+body[data-state=listening] .orb{box-shadow:inset 8px 10px 25px #fff9f135,0 0 75px color-mix(in srgb,var(--orb-tint) 32%,transparent)}
+.activity{display:flex;gap:8px;align-items:center;min-width:0}.activity-orb{width:9px;height:9px;flex-shrink:0;display:inline-block;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent)}
+body[data-state=thinking] .activity-orb{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 24%,transparent)}
+body[data-state=listening] #mic{color:var(--accent);background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--accent)}
+.message-meta{font-weight:650}.message-content{max-width:75ch}.composer-caption{line-height:1.7}.panel-intro p{line-height:1.85}.card h3{line-height:1.4}
+dialog::backdrop{animation:veil-in 180ms var(--ease)}@keyframes veil-in{from{opacity:0}to{opacity:1}}
+html[data-high-contrast=true] .activity-orb{background:var(--text);box-shadow:none}html[data-high-contrast=true] .orb:before{border-color:var(--text)}
+html[data-reduce-motion=true] *,html[data-reduce-motion=true] *::before,html[data-reduce-motion=true] *::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}

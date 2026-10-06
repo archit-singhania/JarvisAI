@@ -1,4 +1,4 @@
-param([string]$Dotnet='dotnet')
+param([string]$Dotnet='dotnet',[switch]$NoRestore)
 $ErrorActionPreference='Stop'
 $taskRepo=Split-Path -Parent $PSScriptRoot
 $taskReleaseRoot=Join-Path $taskRepo 'release'
@@ -6,7 +6,8 @@ $taskStamp=(Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
 $taskPackage=Join-Path $taskReleaseRoot "Wednesday-win-x64-$taskStamp"
 if(-not [IO.Path]::GetFullPath($taskPackage).StartsWith([IO.Path]::GetFullPath($taskReleaseRoot)+[IO.Path]::DirectorySeparatorChar)){throw 'Invalid package path'}
 New-Item -ItemType Directory -Path $taskPackage -Force | Out-Null
-& $Dotnet publish (Join-Path $taskRepo 'desktop/JarvisAI.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o (Join-Path $taskPackage 'desktop')
+[string[]]$taskRestoreArgs=@();if($NoRestore){$taskRestoreArgs=@('--no-restore')}
+& $Dotnet publish (Join-Path $taskRepo 'desktop/JarvisAI.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o (Join-Path $taskPackage 'desktop') @taskRestoreArgs
 if($LASTEXITCODE -ne 0){throw 'Desktop publish failed'}
 New-Item -ItemType Directory -Path (Join-Path $taskPackage 'backend/app') -Force | Out-Null
 $taskAppRoot=Join-Path $taskRepo 'backend/app'

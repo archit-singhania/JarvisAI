@@ -29,6 +29,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string recordContent="";
     [ObservableProperty] private string reminderTime="";
     [ObservableProperty] private bool isListening;
+    [ObservableProperty] private bool isBusy;
+    [ObservableProperty] private double audioLevel;
+    [ObservableProperty] private string palette="amethyst";
     [ObservableProperty] private bool speakResponses;
     [ObservableProperty] private string focus="assistant";
     [ObservableProperty] private string appearance="system";
@@ -49,9 +52,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel()
     {
         ReminderTime=ReminderClock.Suggest(ReminderZone,DateTimeOffset.UtcNow)??"";
-        ws.OnConnectionChanged+=connected=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus=connected?"Workspace connected":"Disconnected · use Reconnect");
+        ws.OnConnectionChanged+=connected=>Application.Current.Dispatcher.Invoke(()=>{ConnectionStatus=connected?"Workspace connected":"Disconnected · use Reconnect";if(!connected)IsBusy=false;});
         ws.MessageReceived+=message=>Application.Current.Dispatcher.Invoke(()=>Handle(message));
-        audio.OnRmsLevel+=rms=>Application.Current.Dispatcher.InvokeAsync(()=>{for(int i=0;i<31;i++)WaveformBars[i]=WaveformBars[i+1];WaveformBars[31]=Math.Max(4,rms*160);});
+        audio.OnRmsLevel+=rms=>Application.Current.Dispatcher.InvokeAsync(()=>{AudioLevel=rms;for(int i=0;i<31;i++)WaveformBars[i]=WaveformBars[i+1];WaveformBars[31]=Math.Max(4,rms*160);});
         audio.OnError+=error=>Application.Current.Dispatcher.Invoke(()=>ConnectionStatus="Audio: "+error);
         _=Guard(Initialize);
     }
@@ -80,7 +83,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         token=newToken;http.DefaultRequestHeaders.Authorization=new("Bearer",token);
         if(conversation.Length>0){try{await Api("conversations/"+conversation);}catch{conversation="";}}
         var p=session.GetProperty("preferences");SpeakResponses=p.GetProperty("tts").GetBoolean();Focus=p.GetProperty("focus").GetString()??"assistant";
-        Appearance=Text(p,"theme");ModelProvider=Text(p,"llm_provider");LocalModel=Text(p,"ollama_model");CloudModel=Text(p,"llm_model");Language=Text(p,"language");Persona=Text(p,"persona");ReminderZone=Text(p,"timezone");ReduceMotion=p.GetProperty("reduce_motion").GetBoolean();ReduceTransparency=p.GetProperty("reduce_transparency").GetBoolean();HighContrast=p.TryGetProperty("high_contrast",out var contrast)&&contrast.GetBoolean();ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast);
+        Appearance=Text(p,"theme");Palette=Text(p,"palette");if(Palette.Length==0)Palette="amethyst";ModelProvider=Text(p,"llm_provider");LocalModel=Text(p,"ollama_model");CloudModel=Text(p,"llm_model");Language=Text(p,"language");Persona=Text(p,"persona");ReminderZone=Text(p,"timezone");ReduceMotion=p.GetProperty("reduce_motion").GetBoolean();ReduceTransparency=p.GetProperty("reduce_transparency").GetBoolean();HighContrast=p.TryGetProperty("high_contrast",out var contrast)&&contrast.GetBoolean();ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast,Palette);
         await Connect();
     }
 
@@ -89,14 +92,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var endpoint=new UriBuilder(http.BaseAddress!){Scheme=http.BaseAddress!.Scheme=="https"?"wss":"ws",Path="/ws",Query=conversation.Length>0?"conversation_id="+conversation:""};
         await ws.ConnectAsync(endpoint.Uri,token);
     }
-    private async Task Guard(Func<Task> action){try{await action();}catch(Exception error){ConnectionStatus=error.Message.Length>220?error.Message[..220]:error.Message;}}
+    private async Task Guard(Func<Task> action){try{await action();}catch(Exception error){IsBusy=false;ConnectionStatus=error.Message.Length>220?error.Message[..220]:error.Message;}}
     private static string Text(JsonElement data,string name)=>data.TryGetProperty(name,out var value)?value.GetString()??"":"";
     private static string ApiError(string text){try{using var error=JsonDocument.Parse(text);var detail=error.RootElement.GetProperty("detail");return detail.ValueKind==JsonValueKind.String?detail.GetString()!:"Check the supplied fields.";}catch{return "The service request failed. Check the connection and try again.";}}
 
     private void Handle(JsonElement data)
     {
         var type=Text(data,"type");var eventTurn=Text(data,"turn_id");
-        if(type=="stream_start"){turn=eventTurn;streaming=new(){Sender="Wednesday"};Messages.Add(streaming);}
+        if(type=="stream_start"){IsBusy=true;ConnectionStatus="Thinking through your request…";turn=eventTurn;streaming=new(){Sender="Wednesday"};Messages.Add(streaming);}
         if(blocked.Contains(eventTurn)&&type is not ("interrupted" or "cleared" or "session"))return;
         switch(type)
         {
@@ -105,20 +108,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 foreach(var m in data.GetProperty("history").EnumerateArray())Messages.Add(new(){Sender=Text(m,"role")=="user"?"You":"Wednesday",Content=Text(m,"content"),IsUser=Text(m,"role")=="user"});
                 Directory.CreateDirectory(Path.GetDirectoryName(stateFile)!);File.WriteAllText(stateFile,JsonSerializer.Serialize(new{token,conversation}));break;
             case "stream_chunk":if(streaming is not null)streaming.Content+=Text(data,"content");break;
-            case "stream_end":streaming=null;ConnectionStatus="Ready when you are";break;
-            case "response":case "reminder":Messages.Add(new(){Content=Text(data,"content")});if(type=="reminder")_=ws.SendAsync(new{type="reminder_ack",reminder_id=Text(data,"reminder_id")});break;
+            case "stream_end":IsBusy=false;streaming=null;ConnectionStatus="Ready when you are";break;
+            case "response":case "reminder":if(type=="response"){IsBusy=false;ConnectionStatus="Ready when you are";}Messages.Add(new(){Content=Text(data,"content")});if(type=="reminder")_=ws.SendAsync(new{type="reminder_ack",reminder_id=Text(data,"reminder_id")});break;
             case "audio_chunk":audio.EnqueueAudio(Convert.FromBase64String(Text(data,"audio_b64")),Text(data,"audio_format"));break;
             case "transcript":Messages.Add(new(){Sender="You",IsUser=true,Content=Text(data,"content")});break;
-            case "interrupted":audio.StopPlayback();streaming=null;ConnectionStatus="Interrupted";break;
-            case "error":case "stt_error":case "speech_unavailable":ConnectionStatus=Text(data,"content");break;
+            case "stt_start":IsBusy=true;ConnectionStatus="Transcribing your voice…";break;
+            case "interrupted":IsBusy=false;audio.StopPlayback();streaming=null;ConnectionStatus="Interrupted";break;
+            case "error":case "stt_error":case "speech_unavailable":IsBusy=false;ConnectionStatus=Text(data,"content");break;
             case "cleared":conversation=Text(data,"conversation_id");Messages.Clear();turn="";streaming=null;blocked.Clear();File.WriteAllText(stateFile,JsonSerializer.Serialize(new{token,conversation}));break;
         }
     }
 
     [RelayCommand] private Task Reconnect()=>Guard(Initialize);
-    [RelayCommand] private Task SendText()=>Guard(async()=>{var text=InputText.Trim();if(text.Length==0)return;await ws.SendAsync(new{type="text",content=text,tts=SpeakResponses});audio.StopPlayback();Messages.Add(new(){Sender="You",Content=text,IsUser=true});InputText="";});
-    [RelayCommand] private Task Interrupt()=>Guard(async()=>{if(turn.Length>0)blocked.Add(turn);audio.StopPlayback();await ws.SendAsync(new{type="interrupt"});});
-    [RelayCommand] private Task ToggleMic()=>Guard(async()=>{if(!audio.IsRecording){audio.StartRecording();IsListening=true;ConnectionStatus="Listening · press Voice again to send";}else{var bytes=await audio.StopRecordingAsync();IsListening=false;await ws.SendAsync(new{type="audio",audio_b64=Convert.ToBase64String(bytes),language=Language,tts=SpeakResponses});}});
+    [RelayCommand] private Task SendText()=>Guard(async()=>{var text=InputText.Trim();if(text.Length==0)return;await ws.SendAsync(new{type="text",content=text,tts=SpeakResponses});audio.StopPlayback();Messages.Add(new(){Sender="You",Content=text,IsUser=true});InputText="";IsBusy=true;ConnectionStatus="Starting your turn…";});
+    [RelayCommand] private Task Interrupt()=>Guard(async()=>{if(turn.Length>0)blocked.Add(turn);audio.StopPlayback();await ws.SendAsync(new{type="interrupt"});IsBusy=false;ConnectionStatus="Ready when you are";});
+    [RelayCommand] private Task ToggleMic()=>Guard(async()=>{if(!audio.IsRecording){audio.StartRecording();IsListening=true;ConnectionStatus="Listening · press Voice again to send";}else{var bytes=await audio.StopRecordingAsync();IsListening=false;IsBusy=true;ConnectionStatus="Processing your voice…";await ws.SendAsync(new{type="audio",audio_b64=Convert.ToBase64String(bytes),language=Language,tts=SpeakResponses});}});
     [RelayCommand] private Task ClearChat()=>Guard(async()=>{await ws.SendAsync(new{type="clear"});});
     [RelayCommand] private Task ScreenAnalyze()=>Guard(async()=>{var picker=new OpenFileDialog{Filter="Images|*.png;*.jpg;*.jpeg;*.webp"};if(picker.ShowDialog()!=true)return;var bytes=await File.ReadAllBytesAsync(picker.FileName);if(bytes.Length>8*1024*1024)throw new InvalidOperationException("Select an image smaller than 8 MB.");await ws.SendAsync(new{type="screen",image_b64=Convert.ToBase64String(bytes),prompt="Describe this selected image."});});
     [RelayCommand] private Task ImportDocument()=>Guard(async()=>{var picker=new OpenFileDialog{Filter="Documents|*.pdf;*.txt;*.md;*.csv;*.json;*.py;*.js;*.ts;*.cs;*.dart"};if(picker.ShowDialog()!=true)return;using var content=new MultipartFormDataContent();content.Add(new ByteArrayContent(await File.ReadAllBytesAsync(picker.FileName)),"file",Path.GetFileName(picker.FileName));using var response=await http.PostAsync("/api/documents",content);if(!response.IsSuccessStatusCode)throw new InvalidOperationException(await response.Content.ReadAsStringAsync());ConnectionStatus="Document imported";await OpenSection("Knowledge");});
@@ -129,7 +133,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand] private Task RunTool(string tool)=>Guard(async()=>{var result=await Api("tools/execute",HttpMethod.Post,new{tool,argument=RecordContent});ConnectionStatus=Text(result,"content");await OpenSection("Tools");});
     [RelayCommand] private Task RemoveRecord(WorkspaceItem item)=>Guard(async()=>{await Api((Section=="Reminders"?"reminders/":"records/")+item.Id,HttpMethod.Delete);await OpenSection(Section);});
     [RelayCommand] private void OpenPreferences()=>Section="Preferences";
-    [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,focus=Focus,persona=Persona,timezone=ReminderZone,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency,high_contrast=HighContrast});ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast);ConnectionStatus="Preferences saved";});
+    [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,palette=Palette,focus=Focus,persona=Persona,timezone=ReminderZone,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency,high_contrast=HighContrast});ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast,Palette);ConnectionStatus="Preferences saved";});
     [RelayCommand] private Task Export()=>Guard(async()=>{var file=new SaveFileDialog{Filter="JSON workspace|*.json",FileName="wednesday-workspace.json"};if(file.ShowDialog()!=true)return;var data=await Api("export");await File.WriteAllTextAsync(file.FileName,JsonSerializer.Serialize(data,new JsonSerializerOptions{WriteIndented=true}));});
     public void Dispose(){if(disposed)return;disposed=true;ws.Dispose();audio.Dispose();http.Dispose();}
 }

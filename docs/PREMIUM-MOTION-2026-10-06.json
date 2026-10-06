@@ -1,0 +1,346 @@
+{
+  "checkedAt": "2026-10-06T12:10:34.161553+00:00",
+  "scope": "Wednesday browser, WPF Windows client, connected AuraScript 2",
+  "palettes": [
+    "amethyst",
+    "lagoon",
+    "ember"
+  ],
+  "motion": {
+    "arrivalMs": 220,
+    "dialogExitMs": 120,
+    "orbPulseMs": 420,
+    "continuousAnimation": false,
+    "osReducedMotion": true,
+    "cancelsInFlight": true
+  },
+  "checks": {
+    "browserMotion": {
+      "passed": true,
+      "checkedAt": "2026-10-06T12:06:16.681Z",
+      "captureAnimations": "allow",
+      "syntheticMicrophone": true,
+      "checks": [
+        "live panel entry clock",
+        "dialog entry and timed exit",
+        "rapid navigation resists stale responses",
+        "three palettes persist across reload",
+        "real turn progress and provider failure",
+        "mid-transition reduced motion cancellation",
+        "actual synthetic MediaRecorder reduced-motion path",
+        "OS reduced motion",
+        "no infinite animation",
+        "390px responsive preferences"
+      ],
+      "pageErrors": []
+    },
+    "browserFunctionality": {
+      "passed": true,
+      "continuationDate": null,
+      "checkedAt": "2026-10-06T12:06:47.550Z",
+      "captureAnimations": "disabled to show settled visual states",
+      "checks": [
+        "owned memory CRUD and reload",
+        "document upload",
+        "reminder schedule/cancel",
+        "tool receipts",
+        "workflow execution",
+        "persistent preferences",
+        "provider failure displayed",
+        "JSON export",
+        "390px layout",
+        "private owner isolation"
+      ],
+      "pageErrors": []
+    },
+    "editorSource": {
+      "passed": true,
+      "packagedExecutable": false,
+      "checks": [
+        "isolated native chooser",
+        "actual IPC boundary",
+        "offline Monaco",
+        "file save",
+        "exclusive creation preserves existing files",
+        "Python syntax diagnostics",
+        "terminal streaming",
+        "real Git checkpoint and diff",
+        "command palette",
+        "themes",
+        "bundled interface typography",
+        "high contrast editor and opaque chrome",
+        "reduced motion editor scrolling",
+        "live command-dialog animation",
+        "in-flight motion cancellation",
+        "persisted signature palette",
+        "immediate reduced editor motion",
+        "OS reduced motion",
+        "no continuous busy animation"
+      ],
+      "pageErrors": []
+    },
+    "editorPackage": {
+      "passed": true,
+      "packagedExecutable": true,
+      "checks": [
+        "isolated native chooser",
+        "actual IPC boundary",
+        "offline Monaco",
+        "file save",
+        "exclusive creation preserves existing files",
+        "Python syntax diagnostics",
+        "terminal streaming",
+        "real Git checkpoint and diff",
+        "command palette",
+        "themes",
+        "bundled interface typography",
+        "high contrast editor and opaque chrome",
+        "reduced motion editor scrolling",
+        "live command-dialog animation",
+        "in-flight motion cancellation",
+        "persisted signature palette",
+        "immediate reduced editor motion",
+        "OS reduced motion",
+        "no continuous busy animation"
+      ],
+      "pageErrors": []
+    },
+    "nativeSource": {
+      "syntheticFixtures": true,
+      "packagedExecutable": false,
+      "checks": [
+        "invisible runtime and clean exit",
+        "distinct light and dark renders",
+        "owned preference readback",
+        "preferences page render",
+        "WAV/MP3 production decoding",
+        "active route and orb clocks",
+        "mid-transition reduced motion cancellation",
+        "immediate reduced motion navigation",
+        "settled animation clocks"
+      ],
+      "passed": true
+    },
+    "nativePackage": {
+      "checks": [
+        "invisible runtime and clean exit",
+        "distinct light and dark renders",
+        "owned preference readback",
+        "preferences page render",
+        "WAV/MP3 production decoding",
+        "active route and orb clocks",
+        "mid-transition reduced motion cancellation",
+        "immediate reduced motion navigation",
+        "settled animation clocks"
+      ],
+      "passed": true,
+      "packagedExecutable": true,
+      "syntheticFixtures": true
+    },
+    "nativeSourceMotion": {
+      "passed": true,
+      "systemAllowsMotion": true,
+      "started": 10,
+      "active": true,
+      "orbActive": true,
+      "cancelled": true,
+      "reducedImmediate": true,
+      "settled": true,
+      "syntheticListeningState": true
+    },
+    "nativePackageMotion": {
+      "passed": true,
+      "systemAllowsMotion": true,
+      "started": 10,
+      "active": true,
+      "orbActive": true,
+      "cancelled": true,
+      "reducedImmediate": true,
+      "settled": true,
+      "syntheticListeningState": true
+    },
+    "editorIntegrity": {
+      "passed": true,
+      "files": [
+        {
+          "file": "src/app.js",
+          "bytes": 21709,
+          "sha256": "530a3d06ed654256f8fe27831d7ddee7b49c81e642083f3ac252c6a7cc4ad874",
+          "packageMatches": true
+        },
+        {
+          "file": "src/styles.css",
+          "bytes": 12853,
+          "sha256": "92d6271c9edbd93076e67ee58f8cfe5b0ed1377598f343107e934c2278669d6e",
+          "packageMatches": true
+        },
+        {
+          "file": "src/motion.js",
+          "bytes": 1858,
+          "sha256": "35dfbfdf123d8f0bc0ab80a32e0c71e8bd0a3a40bc0b0aee245d7a1661af4696",
+          "packageMatches": true
+        },
+        {
+          "file": "src/motion.css",
+          "bytes": 2318,
+          "sha256": "ce02defba09eefc1b38823b1faaabd526a59d5bb7cad579dc3bb66f9a3aaf509",
+          "packageMatches": true
+        },
+        {
+          "file": "src/index.html",
+          "bytes": 4433,
+          "sha256": "f3874e5091973720f0b6f57a52b3f0a0328110dccae542f05bb66360c4466ad2",
+          "packageMatches": true
+        },
+        {
+          "file": "src/assets/fonts/Manrope-Variable.ttf",
+          "bytes": 164700,
+          "sha256": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6",
+          "packageMatches": true
+        },
+        {
+          "file": "src/assets/fonts/Manrope-OFL.txt",
+          "bytes": 4387,
+          "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+          "packageMatches": true
+        }
+      ]
+    },
+    "nativeZipIntegrity": {
+      "passed": true,
+      "files": [
+        {
+          "file": "ui/index.html",
+          "bytes": 5824,
+          "sha256": "5efbe9427000f389ef1588bc34916a4cd46ec9c9018d069079988cbf3341ef95",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/app.js",
+          "bytes": 27408,
+          "sha256": "d83839c4c56e49b7a4d621cb8f40c31a3870bb0cf6b7464da77280d5a7fbcb74",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/styles.css",
+          "bytes": 12780,
+          "sha256": "17ae00b044d24afbecb77d3651de8beef90b2d0e0efab8a7bad526959fe64a84",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/accessibility.css",
+          "bytes": 6254,
+          "sha256": "35e314c2af0e600bd181a8ac5aa6a1b0666c0df6110126c891962572d89b1d99",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/motion.js",
+          "bytes": 1858,
+          "sha256": "35dfbfdf123d8f0bc0ab80a32e0c71e8bd0a3a40bc0b0aee245d7a1661af4696",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/motion.css",
+          "bytes": 3180,
+          "sha256": "9468490620206773bb06d3c9a0103932f5b4f45dcaea63257b292cf2a2aa5af4",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/assets/fonts/Manrope-Variable.ttf",
+          "bytes": 164700,
+          "sha256": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6",
+          "packageMatches": true
+        },
+        {
+          "file": "ui/assets/fonts/Manrope-OFL.txt",
+          "bytes": 4387,
+          "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b",
+          "packageMatches": true
+        },
+        {
+          "file": "backend/app/main.py",
+          "bytes": 23827,
+          "sha256": "022bb77d69c6b225e6b713302e51aa56f12ab516703fa99a1e40bd123f109eac",
+          "packageMatches": true
+        },
+        {
+          "file": "backend/app/workspace.py",
+          "bytes": 10595,
+          "sha256": "c6531aa651ab59c2b5f3e4b6695fd366d6265064fcf3f629090956b405a84e4f",
+          "packageMatches": true
+        }
+      ],
+      "privateStateExcluded": true
+    },
+    "backend": {
+      "passed": true,
+      "count": 17,
+      "warning": "Starlette TestClient httpx deprecation"
+    },
+    "node": {
+      "passed": true,
+      "count": 4
+    },
+    "nativeBuild": {
+      "passed": true,
+      "warnings": 0,
+      "errors": 0
+    }
+  },
+  "artifacts": {
+    "nativeZip": {
+      "file": "release/Wednesday-win-x64-20261006-120541.zip",
+      "bytes": 81969274,
+      "sha256": "6eaf8058c9bcc8b25695040e8f97966247c3a04ccf698a152803c89e3e7fd502"
+    },
+    "editorInstaller": {
+      "file": "aurascript/dist/AuraScript Setup 2.0.0.exe",
+      "bytes": 128293986,
+      "sha256": "f7f4d75c0fb640be376c1833ef366bb4506113e9023bac9873a488356b5d215c"
+    },
+    "editorAsar": {
+      "file": "aurascript/dist/win-unpacked/resources/app.asar",
+      "bytes": 118565584,
+      "sha256": "cdfd8a2fa4792c817b3a319f9da0627bbcfd57ff83beef280e790329e3d8e427"
+    },
+    "nativeExe": {
+      "file": "release/Wednesday-win-x64-20261006-120541/desktop/JarvisAI.exe",
+      "bytes": 173385471,
+      "sha256": "7a9aca338dbc31393b089f2bc36be80346fa83c517ef07a3440c6a3d255396f6"
+    }
+  },
+  "reviewedScreenshots": [
+    "browser-wednesday-ember-dark.png",
+    "browser-wednesday-lagoon-light.png",
+    "browser-wednesday-motion-dialog.png",
+    "browser-wednesday-motion-mobile.png",
+    "editor-source-aurascript-desktop-dark.png",
+    "editor-source-aurascript-desktop-light.png",
+    "editor-source-aurascript-motion-command.png",
+    "editor-package-aurascript-desktop-dark.png",
+    "editor-package-aurascript-desktop-light.png",
+    "editor-package-aurascript-motion-command.png",
+    "native-source-wpf-desktop-dark.png",
+    "native-source-wpf-desktop-light.png",
+    "native-source-wpf-preferences-light.png",
+    "native-package-wpf-desktop-dark.png",
+    "native-package-wpf-desktop-light.png",
+    "native-package-wpf-preferences-light.png"
+  ],
+  "manualChecks": [
+    "physical microphone and speaker playback",
+    "live configured model inference",
+    "interactive installer on distribution device",
+    "other operating systems",
+    "unsigned packages"
+  ],
+  "executionNotes": [
+    "Browser motion captures allow active animations",
+    "Electron own contextIsolation and sandbox remain enabled; desktop journey ran outside injected filesystem sandbox due runtime ACL token restriction",
+    "Build used cached Electron distribution and restored cached .NET packages with --no-restore publish; restricted network required offline path",
+    "Native listening stimulus is synthetic view-model state; browser uses actual synthetic MediaRecorder"
+  ],
+  "sourceAssets": {
+    "fonts": "locally bundled Manrope with SIL OFL; native Segoe UI Variable/system fallback"
+  }
+}

@@ -168,6 +168,7 @@ def delete_conversation(conversation_id: str,identity=Depends(owner)):
 
 class Preferences(BaseModel):
     theme: Literal['system','light','dark'] | None = None
+    palette: Literal['amethyst','lagoon','ember'] | None = None
     reduce_motion: bool | None = None
     reduce_transparency: bool | None = None
     high_contrast: bool | None = None

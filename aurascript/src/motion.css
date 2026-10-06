@@ -1,0 +1,17 @@
+/* A compact orbital instrument for Wednesday's connected editor. */
+:root{--ease:cubic-bezier(.2,.8,.2,1);--orb-tint:#ac99d2}
+html[data-palette=lagoon]{--accent:#9edbd1;--accentSolid:#306f73;--orb-tint:#82c9c1}
+html[data-theme=light][data-palette=lagoon]{--accent:#286c70;--accentSolid:#2f6e73;--orb-tint:#78b8b2}
+html[data-palette=ember]{--accent:#ecc3aa;--accentSolid:#986347;--orb-tint:#c58e75}
+html[data-theme=light][data-palette=ember]{--accent:#8c5133;--accentSolid:#8e573a;--orb-tint:#b9856c}
+button,input,textarea,select{transition:background-color 150ms var(--ease),border-color 150ms var(--ease),box-shadow 150ms var(--ease),transform 150ms var(--ease)}
+button:hover:not(:disabled){box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 25%,transparent)}button:active:not(:disabled){transform:translateY(1px) scale(.985)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.message{animation:none}.small-orb{position:relative;background:radial-gradient(circle at 28% 20%,#fff9e9ad,transparent 55%),radial-gradient(circle,color-mix(in srgb,var(--orb-tint) 68%,transparent),#809bb438)}
+.small-orb:after{content:"";position:absolute;inset:-5px;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);border-top-color:var(--accent);opacity:0;transition:opacity 180ms var(--ease);transform:rotate(-35deg)}
+body[data-state=thinking] .small-orb:after,body[data-state=listening] .small-orb:after{opacity:1}body[data-state=listening] #voice{box-shadow:inset 0 0 0 1px var(--accent);color:var(--accent)}
+.terminal[aria-busy=true] .pane-title{border-bottom:1px solid var(--accent)}.assistant-heading span{font-size:10px;line-height:1.5}.message small{font-weight:650;letter-spacing:.4px}
+dialog::backdrop{animation:veil-in 180ms var(--ease)}@keyframes veil-in{from{opacity:0}to{opacity:1}}
+html[data-high-contrast=true] .small-orb:after{border-color:var(--text)}
+html[data-reduce-motion=true] *,html[data-reduce-motion=true] *::before,html[data-reduce-motion=true] *::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
