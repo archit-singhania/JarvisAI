@@ -21,6 +21,8 @@ desktop/.vs/
 data/
 models/
 logs/
+*.log
+.runtime/
 *.db
 
 # Environment
