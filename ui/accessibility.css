@@ -16,3 +16,28 @@ html[data-high-contrast=true]{--muted:var(--text);--line:var(--text)}
 html[data-high-contrast=true] button{border:1px solid var(--text)}
 @media(prefers-reduced-transparency:reduce),(prefers-contrast:more){:is(.glass,dialog,.header-actions,.nav.active){backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--surface);box-shadow:none;border-color:var(--line)}}
 @media(max-width:700px){.header-actions{gap:4px;padding:4px}.rail{padding-bottom:max(7px,env(safe-area-inset-bottom))}.nav{min-height:48px}.composer-wrap{padding-bottom:env(safe-area-inset-bottom)}}
+
+/* Platinum, ink and amethyst form the chrome; paper keeps text calm. */
+:root{--glass-rim:#c9d2ed36;--glass-glint:#e7eaff1c;--champagne:#bdd0dd;--font:Manrope,"Segoe UI Variable Text","Aptos",Inter,"Segoe UI",system-ui,sans-serif;--font-display:Manrope,"Segoe UI Variable Display","Aptos Display","SF Pro Display",var(--font)}
+html[data-theme=light]{--glass-rim:#fffffff2;--glass-glint:#ffffffb8;--champagne:#526c84}
+body{background:radial-gradient(ellipse at 82% 5%,#a990d924,transparent 48%),radial-gradient(ellipse at 2% 82%,#749ca817,transparent 50%),var(--bg)}
+html[data-theme=light] body{background:radial-gradient(ellipse at 82% 5%,#b2a1d322,transparent 48%),radial-gradient(ellipse at 2% 82%,#9bb9bd20,transparent 50%),var(--bg)}
+h1,h2,h3,.brand{font-family:var(--font-display)}
+.brand{letter-spacing:-.65px;font-weight:600}.brand small{font-family:var(--font);font-size:10px;letter-spacing:.25px;line-height:1.7}
+.eyebrow{letter-spacing:1.9px;font-size:10px;font-weight:600}.welcome .eyebrow{color:var(--champagne)}
+h1{font-size:25px;font-weight:550;letter-spacing:-.75px}.welcome h2{font-weight:450;letter-spacing:-2.1px;line-height:1.12}.welcome p{font-size:14px;line-height:1.9}
+.glass,dialog,.header-actions{box-shadow:inset 0 1px #f6f3ff42,inset 0 -1px #2d385727,var(--shadow)}
+.rail{padding-top:26px}.primary{background:linear-gradient(145deg,#ffffff12,transparent 75%),var(--accent-solid);box-shadow:inset 0 1px #ffffff30,0 5px 16px #0a071d18;letter-spacing:.1px}
+.nav{font-weight:500}.nav span{color:var(--accent)}.nav.active{background:linear-gradient(130deg,#c3b4ed22,#91a9c109);box-shadow:inset 0 1px #ffffff20,inset 3px 0 var(--accent),0 6px 18px #04091712}
+.suggestions button{background:linear-gradient(120deg,#c5b8fa08,transparent 78%),var(--surface);padding:13px 16px;color:var(--text);box-shadow:inset 0 1px #ffffff0b;transition:transform .18s,border-color .18s,box-shadow .18s}
+.suggestions button:hover{transform:translateX(3px);box-shadow:0 7px 20px #05091917}.suggestions button span{color:var(--champagne)}
+.orb{background:radial-gradient(circle at 30% 18%,#fff9eecc,transparent 33%),radial-gradient(ellipse at 76% 72%,#8294b855,transparent 60%),radial-gradient(circle at 50% 50%,#a591da70,#40496038 72%);border-color:#e6e0f875;box-shadow:inset 7px 9px 25px #fff9f135,inset -14px -18px 40px #343b5d5c,0 0 85px #ac99d225,0 35px 60px #05081928}
+.orb-core{background:radial-gradient(ellipse at 38% 25%,#e1d3fc66,#abbbcf15 65%)}.orb-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+.composer{border-radius:24px;padding-top:16px}.composer textarea{line-height:1.75}.send{box-shadow:inset 0 1px #ffffff70,0 4px 12px #07061920;color:var(--bg)}
+.card{background:linear-gradient(135deg,#c5b8fa09,transparent 65%),var(--surface);box-shadow:inset 0 1px #ffffff0c}.card h3{font-size:18px;letter-spacing:-.4px}.panel-intro h2{font-weight:500;letter-spacing:-1.1px}.card small{letter-spacing:.15px}
+input::placeholder,textarea::placeholder{color:var(--muted);opacity:.85}::selection{background:#ae96d944;color:var(--text)}
+html[data-high-contrast=true] :is(.primary,.nav.active,.suggestions button,.card,.send){background:var(--surface);color:var(--text);border:1px solid var(--text);box-shadow:none}
+html[data-high-contrast=true] .welcome .eyebrow{color:var(--text)}
+html[data-reduce-transparency=true] :is(.glass,dialog,.header-actions,.nav.active),html[data-high-contrast=true] :is(.glass,dialog,.header-actions,.nav.active){background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
+@media(prefers-contrast:more){:is(.primary,.nav.active,.suggestions button,.card,.send){background:var(--surface);color:var(--text);border:1px solid currentColor;box-shadow:none}.welcome .eyebrow{color:var(--text)}}
+@media(max-width:700px){.rail{padding-top:7px}h1{font-size:21px}.welcome h2{font-size:36px;letter-spacing:-1.35px}.welcome p{font-size:12px;line-height:1.75}.suggestions button{padding:10px 15px}.nav.active{box-shadow:inset 0 1px #ffffff20}.eyebrow{font-size:9px}}

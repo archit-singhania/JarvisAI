@@ -85,11 +85,12 @@ public static class ThemeManager
             Application.Current.Resources["GlassPanel"]=SystemColors.WindowBrush;
             Application.Current.Resources["GlassControl"]=SystemColors.ControlBrush;
             Application.Current.Resources["GlassRim"]=SystemColors.WindowTextBrush;
+            Application.Current.Resources["OrbMaterial"]=SystemColors.ControlBrush;
             return;
         }
         bool light=theme=="light";
         if(theme=="system")light=Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize","AppsUseLightTheme",0) is int value&&value==1;
-        var colors=light?new Dictionary<string,string>{{"BgDeep","#F5F4F8"},{"BgPanel","#FDFCFF"},{"BgCard","#ECEAF3"},{"TextPrimary","#242136"},{"TextSecondary","#696478"},{"AccentCyan","#705AC3"},{"BorderBrush","#DDD8E8"}}:new Dictionary<string,string>{{"BgDeep","#10111B"},{"BgPanel","#191B28"},{"BgCard","#232535"},{"TextPrimary","#F3F1FA"},{"TextSecondary","#A19DB2"},{"AccentCyan","#B6A8FF"},{"BorderBrush","#343345"}};
+        var colors=light?new Dictionary<string,string>{{"BgDeep","#F3F1EC"},{"BgPanel","#FFFEFA"},{"BgCard","#EAE8EF"},{"TextPrimary","#242B3D"},{"TextSecondary","#626C80"},{"AccentCyan","#6B54AA"},{"BorderBrush","#D0CCDD"}}:new Dictionary<string,string>{{"BgDeep","#10131D"},{"BgPanel","#191E2B"},{"BgCard","#252B3C"},{"TextPrimary","#F2F0EB"},{"TextSecondary","#ACB2C5"},{"AccentCyan","#C5B8FA"},{"BorderBrush","#404860"}};
         foreach(var item in colors)Application.Current.Resources[item.Key]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Value));
         Brush Material(string opaque,string top,string baseColor) => reduceTransparency
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString(opaque))
@@ -97,8 +98,9 @@ public static class ThemeManager
                 new((Color)ColorConverter.ConvertFromString(top),0),
                 new((Color)ColorConverter.ConvertFromString(baseColor),0.45),
                 new((Color)ColorConverter.ConvertFromString(baseColor),1)},new Point(0,0),new Point(1,1));
-        Application.Current.Resources["GlassPanel"]=Material(colors["BgPanel"],light?"#EFFDFBFF":"#EC353347",light?"#C9F5F2FB":"#D51E202E");
-        Application.Current.Resources["GlassControl"]=Material(colors["BgCard"],light?"#F6FFFFFF":"#EC454058",light?"#DBEAE5F5":"#C52D2B40");
-        Application.Current.Resources["GlassRim"]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(reduceTransparency?colors["BorderBrush"]:light?"#FFFFFFFF":"#88786C96"));
+        Application.Current.Resources["GlassPanel"]=Material(colors["BgPanel"],light?"#FAFFFFFF":"#EC3E415B",light?"#D9F8F6F2":"#D51D2231");
+        Application.Current.Resources["GlassControl"]=Material(colors["BgCard"],light?"#FAFFFFFF":"#EC4B4E67",light?"#E0EAE8EF":"#D52D3347");
+        Application.Current.Resources["GlassRim"]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(reduceTransparency?colors["BorderBrush"]:light?"#FFFFFFFF":"#88A3A8C4"));
+        Application.Current.Resources["OrbMaterial"]=reduceTransparency?new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors["AccentCyan"])):new RadialGradientBrush(new GradientStopCollection{new((Color)ColorConverter.ConvertFromString("#FFF9EE"),0),new((Color)ColorConverter.ConvertFromString(light?"#CABBDD":"#B9A5DF"),0.5),new((Color)ColorConverter.ConvertFromString(light?"#99AAC0":"#667697"),1)}){GradientOrigin=new Point(0.3,0.2)};
     }
 }

@@ -1,4 +1,5 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <SolidColorBrush x:Key="BgDeep" Color="#10111B"/><SolidColorBrush x:Key="BgPanel" Color="#191B28"/><SolidColorBrush x:Key="BgCard" Color="#232535"/><SolidColorBrush x:Key="TextPrimary" Color="#F3F1FA"/><SolidColorBrush x:Key="TextSecondary" Color="#A19DB2"/><SolidColorBrush x:Key="AccentCyan" Color="#B6A8FF"/><SolidColorBrush x:Key="BorderBrush" Color="#343345"/>
-  <SolidColorBrush x:Key="GlassPanel" Color="#D51E202E"/><SolidColorBrush x:Key="GlassControl" Color="#C52D2B40"/><SolidColorBrush x:Key="GlassRim" Color="#88786C96"/>
+  <SolidColorBrush x:Key="BgDeep" Color="#10131D"/><SolidColorBrush x:Key="BgPanel" Color="#191E2B"/><SolidColorBrush x:Key="BgCard" Color="#252B3C"/><SolidColorBrush x:Key="TextPrimary" Color="#F2F0EB"/><SolidColorBrush x:Key="TextSecondary" Color="#ACB2C5"/><SolidColorBrush x:Key="AccentCyan" Color="#C5B8FA"/><SolidColorBrush x:Key="BorderBrush" Color="#404860"/>
+  <SolidColorBrush x:Key="GlassPanel" Color="#D51D2231"/><SolidColorBrush x:Key="GlassControl" Color="#D52D3347"/><SolidColorBrush x:Key="GlassRim" Color="#88A3A8C4"/>
+  <RadialGradientBrush x:Key="OrbMaterial" GradientOrigin="0.3,0.2"><GradientStop Color="#FFF9EE" Offset="0"/><GradientStop Color="#B9A5DF" Offset="0.5"/><GradientStop Color="#667697" Offset="1"/></RadialGradientBrush>
 </ResourceDictionary>

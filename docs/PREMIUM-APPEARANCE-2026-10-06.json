@@ -1,0 +1,152 @@
+{
+  "checkedAt": "2026-10-06T07:48:20.8194346Z",
+  "scope": "Wednesday browser, native Windows and maintained connected editor appearance",
+  "palette": {
+    "light": "Warm paper / deep slate / plum",
+    "dark": "Ink / amethyst / platinum / cool mineral"
+  },
+  "fonts": {
+    "editor": "Locally bundled Manrope variable 200-800",
+    "browser": "Locally bundled Manrope variable 200-800",
+    "native": "Segoe UI Variable Text / Display with Segoe UI fallback",
+    "license": "SIL Open Font License stored beside browser/editor font"
+  },
+  "checks": {
+    "editorPackage": {
+      "passed": true,
+      "packagedExecutable": true,
+      "checks": [
+        "isolated native chooser",
+        "actual IPC boundary",
+        "offline Monaco",
+        "file save",
+        "exclusive creation preserves existing files",
+        "Python syntax diagnostics",
+        "terminal streaming",
+        "real Git checkpoint and diff",
+        "command palette",
+        "themes",
+        "bundled interface typography",
+        "high contrast editor and opaque chrome",
+        "reduced motion editor scrolling"
+      ],
+      "pageErrors": []
+    },
+    "browser": {
+      "passed": true,
+      "continuationDate": "2026-10-06 premium refinement",
+      "checkedAt": "2026-10-06T07:29:49.212Z",
+      "captureAnimations": "disabled to show settled visual states",
+      "checks": [
+        "owned memory CRUD and reload",
+        "document upload",
+        "reminder schedule/cancel",
+        "tool receipts",
+        "workflow execution",
+        "persistent preferences",
+        "provider failure displayed",
+        "JSON export",
+        "390px layout",
+        "private owner isolation"
+      ],
+      "pageErrors": []
+    },
+    "nativeSource": {
+      "checks": [
+        "invisible runtime and clean exit",
+        "distinct light and dark renders",
+        "owned preference readback",
+        "preferences page render",
+        "WAV/MP3 production decoding"
+      ],
+      "passed": true,
+      "packagedExecutable": false,
+      "syntheticFixtures": true
+    },
+    "nativePackage": {
+      "syntheticFixtures": true,
+      "packagedExecutable": true,
+      "checks": [
+        "invisible runtime and clean exit",
+        "distinct light and dark renders",
+        "owned preference readback",
+        "preferences page render",
+        "WAV/MP3 production decoding"
+      ],
+      "passed": true
+    },
+    "browserFontMobile": {
+      "passed": true,
+      "checks": [
+        "locally bundled browser font loaded",
+        "fresh 390px home with no horizontal overflow",
+        "real appearance control switched to light"
+      ]
+    },
+    "nodeTests": {
+      "count": 4,
+      "passed": true
+    },
+    "editorIntegrity": {
+      "passed": true,
+      "files": [
+        {
+          "file": "src/styles.css",
+          "bytes": 12853,
+          "sha256": "92d6271c9edbd93076e67ee58f8cfe5b0ed1377598f343107e934c2278669d6e"
+        },
+        {
+          "file": "src/app.js",
+          "bytes": 20322,
+          "sha256": "442c5d16ed3e7f3df57e4cbb3fe927c139a0e8e8c87dec8470e771e1d9b298b4"
+        },
+        {
+          "file": "src/assets/fonts/Manrope-Variable.ttf",
+          "bytes": 164700,
+          "sha256": "3ae11c49db0455a3cc33e37d380f20fdb8c7f8b41dc07625c177e3d87a9d6ae6"
+        },
+        {
+          "file": "src/assets/fonts/Manrope-OFL.txt",
+          "bytes": 4387,
+          "sha256": "58172e0c0fac2cda8a37b348164bb55e44b0e69051e557e92b1d3f6910141f7b"
+        }
+      ]
+    },
+    "editorSource": {
+      "pageErrors": 0,
+      "passed": true,
+      "checkCount": 13
+    },
+    "nativeReleaseBuild": {
+      "warnings": 0,
+      "errors": 0,
+      "passed": true
+    }
+  },
+  "artifacts": {
+    "nativeZip": "release/Wednesday-win-x64-20261006-074047.zip",
+    "editorInstaller": "aurascript/dist/AuraScript Setup 2.0.0.exe",
+    "editorInstallerBytes": 128292953,
+    "nativeSha256": "296A6F598ED0F612FABF63E355B1B44684AD11D52FB2B09BD008A67C183F0028",
+    "editorSha256": "30EB799892356701621A395A24BDBEEFD9E015410DD8E40E02A7D70407113EBC"
+  },
+  "reviewedScreenshots": [
+    "aurascript-desktop-dark.png",
+    "aurascript-desktop-light.png",
+    "wednesday-accessible-light.png",
+    "wednesday-desktop-dark.png",
+    "wednesday-desktop-light.png",
+    "wednesday-mobile-home-light.png",
+    "wednesday-mobile-settings.png",
+    "wpf-desktop-dark.png",
+    "wpf-desktop-light.png",
+    "wpf-preferences-light.png"
+  ],
+  "limits": [
+    "physical microphone and playback",
+    "live model inference",
+    "interactive installer distribution",
+    "other operating system builds",
+    "unsigned packages"
+  ]
+}
