@@ -14,6 +14,7 @@
       <button class="nav" data-view="memory"><span>◇</span> Memory</button>
       <button class="nav" data-view="reminders"><span>◷</span> Reminders</button>
       <button class="nav" data-view="tools"><span>⌘</span> Tools & workflows</button>
+      <button class="nav" data-view="continuity"><span>⑂</span> Continuity studio</button>
     </nav>
     <div class="history-heading"><span>YOUR CONVERSATIONS</span><button class="icon-button" id="search-open" aria-label="Search conversations">⌕</button></div>
     <input class="search" id="history-search" type="search" placeholder="Search your work…" aria-label="Search your conversations">
@@ -33,4 +34,7 @@
 <input id="document-input" type="file" accept=".pdf,.txt,.md,.csv,.json,.py,.js,.ts,.cs,.dart" hidden><input id="screen-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
 <div id="toast" class="toast glass" role="status" hidden></div>
 <dialog id="editor-dialog"><form id="editor-form"><div class="dialog-heading"><h2 id="dialog-title"></h2><button type="button" class="icon-button" id="dialog-close" aria-label="Close">×</button></div><div id="dialog-fields"></div><div class="dialog-actions"><button type="button" class="quiet" id="dialog-cancel">Cancel</button><button class="primary" type="submit">Save</button></div></form></dialog>
+<script src="continuity.js" defer></script>
+<script src="routines.js" defer></script>
+<script src="meetings.js" defer></script>
 </body></html>

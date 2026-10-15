@@ -68,9 +68,17 @@ async def reminder_loop():
 @asynccontextmanager
 async def lifespan(app):
     task = asyncio.create_task(reminder_loop())
+    from app.routines import RoutineService
+    RoutineService(store).recover()
+    routine_task = asyncio.create_task(routine_loop())
+    from app.meetings import Meetings
+    Meetings(store).recover()
+    meeting_task = asyncio.create_task(meeting_loop())
     yield
     task.cancel()
-    await asyncio.gather(task,return_exceptions=True)
+    routine_task.cancel()
+    meeting_task.cancel()
+    await asyncio.gather(task,routine_task,meeting_task,return_exceptions=True)
     for runtime in tuple(runtimes):
         await runtime.interrupt(False)
     if wake_listener:
@@ -526,5 +534,42 @@ async def socket(ws: WebSocket):
         await runtime.interrupt(False)
         runtimes.discard(runtime)
 
+
+from app.continuity_api import router as continuity_router
+from app.routines import router as routine_router
+from app.meetings import router as meeting_router
+app.include_router(continuity_router(lambda: store, owner))
+app.include_router(routine_router(lambda: store, owner))
+app.include_router(meeting_router(lambda: store, owner))
+
+
+async def meeting_loop():
+    from app.meetings import Meetings,local_transcribe
+    service=Meetings(store)
+    while True:
+        try:await service.tick(local_transcribe)
+        except asyncio.CancelledError:raise
+        except Exception:logger.exception('Meeting worker needs attention')
+        await asyncio.sleep(1)
+
+
+async def routine_loop():
+    from app.routines import RoutineService
+    service = RoutineService(store)
+    async def execute(identity, tool, argument):
+        if tool == 'assistant':
+            prefs = store.prefs(identity)
+            configuration = settings.model_copy(update={k.upper():prefs[k] for k in ('llm_provider','llm_model','ollama_model')})
+            result = await LLMClient(configuration).generate_response([{'role':'user','content':argument}])
+            return {'success':True,'content':result['content']}
+        return await tools(ToolInput(tool=tool, argument=argument[:300]),identity)
+    while True:
+        try:
+            await service.tick(execute)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Routine worker failed; active steps require inspection before retry')
+        await asyncio.sleep(.5)
 
 app.mount('/ui',StaticFiles(directory=str(Path(__file__).resolve().parents[2]/'ui'),html=True),name='ui')

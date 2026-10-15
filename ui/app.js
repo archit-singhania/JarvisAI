@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {owner:null, conversation:null, socket:null, preferences:{}, view:'chat', message:null, turn:null, blocked:new Set(), reconnect:null, recording:null, acquiring:false, audio:null, queue:[], objectUrl:null};
-const titles = {chat:'Assistant',knowledge:'Knowledge',memory:'Memory',reminders:'Reminders',tools:'Tools & workflows',settings:'Preferences'};
+const titles = {chat:'Assistant',knowledge:'Knowledge',memory:'Memory',reminders:'Reminders',tools:'Tools & workflows',continuity:'Continuity studio',settings:'Preferences'};
 let toastTimer,viewRequest=0,lastProgress=0;
 const motion=window.WednesdayMotion;
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;motion.enter($('toast'));clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500);}
@@ -107,6 +107,8 @@ async function showView(view){
       controls.append(button('＋ Save workflow',()=>editDialog('Reusable workflow',[field('Name','title'),field('One step per line: time, weather, or search: query','steps','textarea','time\nweather')],body=>{const steps=body.steps.split('\n').filter(Boolean).map(line=>{const [tool,...rest]=line.split(':');if(!['time','weather','search'].includes(tool.trim()))throw new Error('Workflows support time, weather, and search.');return {tool:tool.trim(),argument:rest.join(':').trim()};});return api('workflows',json('POST',{title:body.title,steps}));}),'primary'));panel.append(controls);
       const grid=element('div','card-grid');workflows.workflows.forEach(w=>grid.append(card(w.title,'Saved sequence · '+JSON.parse(w.content).length+' steps',null,[button('Run workflow',async()=>{const result=await api('workflows/'+w.id+'/run',{method:'POST'});toast(result.results.map(r=>r.content).join(' · '));showView(view);}),button('Remove',async()=>{await api('records/'+w.id,{method:'DELETE'});showView(view);})])));panel.append(grid);
       panel.append(intro('Execution receipts','Results recorded by the service, including unavailable tools.'));const receiptsGrid=element('div','card-grid');receipts.receipts.forEach(r=>receiptsGrid.append(card(r.tool,r.result.content,new Date(r.created_at).toLocaleString())));panel.append(receipts.receipts.length?receiptsGrid:empty('Run your first tool to create an execution receipt.'));
+    }else if(view==='continuity'){
+      await renderContinuity(panel,()=>request===viewRequest);
     }else if(view==='settings'){
       const caps=await api('capabilities');if(request!==viewRequest)return;const p=state.preferences;panel.replaceChildren(intro('Make it feel like yours.','Choose an engine, a focus, and an appearance. Cloud providers require backend API keys; local inference requires a running Ollama model.'));
       const form=element('form','settings-form card');const grid=element('div','settings-grid');
