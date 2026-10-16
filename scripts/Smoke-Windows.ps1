@@ -55,7 +55,7 @@ try {
   $taskAudio=Get-Content -Raw -LiteralPath (Join-Path $taskAudioRoot 'native-audio-acceptance.json')|ConvertFrom-Json
   if(-not $taskAudio.passed){throw 'Native audio decoding failed'}
   $taskIsPackage=[IO.Path]::GetFullPath($Executable).StartsWith(([IO.Path]::GetFullPath((Join-Path $taskRepo 'release'))+[IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase)
-  @{passed=$true;packagedExecutable=$taskIsPackage;syntheticFixtures=$true;checks=@('invisible runtime and clean exit','distinct light and dark renders','owned preference readback','preferences page render','WAV/MP3 production decoding','active route and orb clocks','mid-transition reduced motion cancellation','immediate reduced motion navigation','settled animation clocks')}|ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'acceptance.json')
+  @{passed=$true;packagedExecutable=$taskIsPackage;syntheticFixtures=$true;checks=@('invisible runtime and clean exit','distinct light and dark renders','owned preference readback','preferences page render','five native continuity panel renders','WAV/MP3 production decoding','active route and orb clocks','mid-transition reduced motion cancellation','immediate reduced motion navigation','settled animation clocks')}|ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'acceptance.json')
   Write-Output 'Native Windows acceptance passed.'
 } finally {
   $env:WEDNESDAY_URL=$taskPreviousUrl

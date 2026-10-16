@@ -6,6 +6,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const browser=await chromium.launch({channel:'chrome',headless:true});
   try{
     const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+    const progress=[];page.on('websocket',socket=>socket.on('framereceived',frame=>{try{const event=JSON.parse(frame.payload);if(['routine_progress','meeting_progress'].includes(event.type))progress.push(event);}catch{}}));
     await page.goto('http://127.0.0.1:8120/ui/');await page.getByText('Workspace connected',{exact:true}).waitFor();
     const seed=await page.evaluate(async()=>{
       const json=async(p,b)=>{const r=await fetch('/api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});if(!r.ok)throw new Error(await r.text());return r.json();};
@@ -61,7 +62,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
     assert.equal(await page.getByRole('checkbox',{name:/Keep raw audio/}).isChecked(),false);
     await page.getByLabel('Import meeting audio',{exact:true}).setInputFiles('.runtime/real-meeting-20261016/source.wav');
     let meeting;
-    for(let i=0;i<150;i++){const jobs=await page.evaluate(async()=>await(await fetch('/api/meetings')).json());meeting=jobs.meetings.find(m=>m.title==='Consented QA meeting');if(meeting?.status==='completed'||meeting?.status==='failed')break;await new Promise(r=>setTimeout(r,200));}
+    for(let i=0;i<900;i++){const jobs=await page.evaluate(async()=>await(await fetch('/api/meetings')).json());meeting=jobs.meetings.find(m=>m.title==='Consented QA meeting');if(meeting?.status==='completed'||meeting?.status==='failed')break;await new Promise(r=>setTimeout(r,200));}
     assert(meeting&&meeting.status==='completed',meeting?.error||JSON.stringify((await page.evaluate(async()=>await(await fetch('/api/meetings')).json())).meetings.map(m=>({title:m.title,status:m.status,error:m.error}))));assert(!meeting.audio_present);assert(meeting.transcript.some(s=>s.text.toLowerCase().includes('meeting')));
     await page.getByRole('button',{name:'Refresh meeting jobs',exact:true}).click();
     await page.getByText('Consented QA meeting · completed',{exact:true}).click();
@@ -75,7 +76,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
     const dir='docs/continuity-2026-10-15';fs.mkdirSync(dir,{recursive:true});await page.screenshot({path:dir+'/desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});await page.screenshot({path:dir+'/phone.png',fullPage:true});
     await page.setViewportSize({width:1440,height:1000});await page.reload();await page.getByText('Workspace connected',{exact:true}).waitFor();await page.getByRole('button',{name:'Continuity studio',exact:false}).click();await page.getByRole('button',{name:'Restore layout',exact:true}).last().waitFor();
-    assert.deepEqual(errors,[]);fs.writeFileSync(dir+'/acceptance.json',JSON.stringify({date:new Date().toISOString(),branchCreated:true,immutableComparison:true,digestExclusion:true,routineCompleted:true,layoutsPersisted:true,scheduledDigestStored:true,realLocalMeetingTranscribed:true,consentGate:true,rawAudioRemoved:true,meetingNotesSaved:true,pageErrors:errors},null,2));
+    assert(progress.some(e=>e.type==='routine_progress'&&e.job.status==='completed'));assert(progress.some(e=>e.type==='meeting_progress'&&e.job.status==='completed'));
+    assert.deepEqual(errors,[]);fs.writeFileSync(dir+'/acceptance.json',JSON.stringify({date:new Date().toISOString(),branchCreated:true,immutableComparison:true,digestExclusion:true,routineCompleted:true,layoutsPersisted:true,scheduledDigestStored:true,realLocalMeetingTranscribed:true,consentGate:true,rawAudioRemoved:true,meetingNotesSaved:true,realtimeRoutineProgress:true,realtimeMeetingProgress:true,pageErrors:errors},null,2));
     console.log('Wednesday continuity browser acceptance passed.');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

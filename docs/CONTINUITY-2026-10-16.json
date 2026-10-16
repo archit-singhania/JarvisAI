@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-16T12:32:12.128900+00:00",
+  "backendTests": 41,
+  "nativeBuild": {
+    "warnings": 0,
+    "errors": 0
+  },
+  "browser": {
+    "date": "2026-10-16T12:25:42.656Z",
+    "branchCreated": true,
+    "immutableComparison": true,
+    "digestExclusion": true,
+    "routineCompleted": true,
+    "layoutsPersisted": true,
+    "scheduledDigestStored": true,
+    "realLocalMeetingTranscribed": true,
+    "consentGate": true,
+    "rawAudioRemoved": true,
+    "meetingNotesSaved": true,
+    "realtimeRoutineProgress": true,
+    "realtimeMeetingProgress": true,
+    "pageErrors": []
+  },
+  "nativeFunctional": {
+    "passed": true,
+    "syntheticFixture": true,
+    "modelResponse": "Controlled labeled fixture for branch context only; no live AI inference claim",
+    "checks": [
+      "native branch creation and immutable comparison",
+      "native dry-run and real time routine",
+      "native consent gate and real local transcription",
+      "native audio cleanup and notes readback",
+      "native selected-source digest, schedule and reload",
+      "native layout persistence and restore without recording"
+    ]
+  },
+  "packageSourceMatch": {
+    "checked": 40,
+    "mismatched": []
+  },
+  "artifacts": [
+    {
+      "path": "release/Wednesday-win-x64-20261016-122540/desktop/JarvisAI.exe",
+      "bytes": 173467391,
+      "sha256": "43c648be2698f39eee665612a717a48ed53ab5eac17d882f54014eb2e30c9035"
+    },
+    {
+      "path": "release/Wednesday-win-x64-20261016-122540.zip",
+      "bytes": 88854065,
+      "sha256": "ddd1d38f62ceb7039ed6d2e1b27c2f7e8d2bad9d1b134373430df0aa971af1bb"
+    }
+  ],
+  "limits": [
+    "Physical microphone/playback and distribution device unverified",
+    "No live AI provider inference claim; native branch fixture response explicitly controlled",
+    "Unsigned Windows package; signing, public hosting and macOS/iOS unavailable"
+  ],
+  "packagedSmoke": {
+    "syntheticFixtures": true,
+    "packagedExecutable": true,
+    "passed": true,
+    "checks": [
+      "invisible runtime and clean exit",
+      "distinct light and dark renders",
+      "owned preference readback",
+      "preferences page render",
+      "five native continuity panel renders",
+      "WAV/MP3 production decoding",
+      "active route and orb clocks",
+      "mid-transition reduced motion cancellation",
+      "immediate reduced motion navigation",
+      "settled animation clocks"
+    ]
+  },
+  "packagedFunctional": {
+    "passed": true,
+    "syntheticFixture": true,
+    "modelResponse": "Controlled labeled fixture for branch context only; no live AI inference claim",
+    "checks": [
+      "native branch creation and immutable comparison",
+      "native dry-run and real time routine",
+      "native consent gate and real local transcription",
+      "native audio cleanup and notes readback",
+      "native selected-source digest, schedule and reload",
+      "native layout persistence and restore without recording"
+    ]
+  }
+}

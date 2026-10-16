@@ -77,11 +77,13 @@ async def lifespan(app):
     from app.meetings import Meetings
     Meetings(store).recover()
     meeting_task = asyncio.create_task(meeting_loop())
+    progress_task = asyncio.create_task(progress_loop())
     yield
     task.cancel()
     routine_task.cancel()
     meeting_task.cancel()
-    await asyncio.gather(task,routine_task,meeting_task,return_exceptions=True)
+    progress_task.cancel()
+    await asyncio.gather(task,routine_task,meeting_task,progress_task,return_exceptions=True)
     for runtime in tuple(runtimes):
         await runtime.interrupt(False)
     if wake_listener:
@@ -544,6 +546,22 @@ from app.meetings import router as meeting_router
 app.include_router(continuity_router(lambda: store, owner))
 app.include_router(routine_router(lambda: store, owner))
 app.include_router(meeting_router(lambda: store, owner))
+
+
+async def progress_loop():
+    from app.progress import Progress
+    observers={}
+    while True:
+        for runtime in tuple(runtimes):
+            try:
+                observer=observers.setdefault(runtime,Progress(store))
+                for event in observer.changes(runtime.owner):
+                    kind=event.pop('type')
+                    await runtime.send(kind,job=event)
+            except asyncio.CancelledError:raise
+            except Exception:logger.debug('Job progress deferred until reconnect')
+        observers={runtime:observer for runtime,observer in observers.items() if runtime in runtimes}
+        await asyncio.sleep(.5)
 
 
 async def meeting_loop():

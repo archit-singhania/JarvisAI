@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "syntheticFixture": true,
+  "modelResponse": "Controlled labeled fixture for branch context only; no live AI inference claim",
+  "checks": [
+    "native branch creation and immutable comparison",
+    "native dry-run and real time routine",
+    "native consent gate and real local transcription",
+    "native audio cleanup and notes readback",
+    "native selected-source digest, schedule and reload",
+    "native layout persistence and restore without recording"
+  ]
+}

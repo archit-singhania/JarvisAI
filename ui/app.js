@@ -57,6 +57,7 @@ function dispatch(data){
     case 'error':case 'stt_error':case 'speech_unavailable':if(state.message&&!state.message.textContent){state.message.textContent=data.content;state.message.classList.add('operation-error');}toast(data.content,true);setActivity('Check your engine in Preferences');break;
     case 'interrupted':stopAudio();state.message=null;setActivity('Response interrupted');break;
     case 'cleared':state.conversation=data.conversation_id;localStorage.setItem('wednesday-conversation-'+state.owner,state.conversation);$('messages').replaceChildren();$('messages').classList.remove('has-messages');$('welcome').hidden=false;refreshHistory();break;
+    case 'routine_progress':case 'meeting_progress':{const job=data.job;if(job){const status=document.querySelector('#continuity-job-status');if(status)status.textContent=(data.type==='routine_progress'?'Routine':'Meeting')+' · '+job.status+' · '+job.id;}}break;
     case 'reminder':toast(data.content);send({type:'reminder_ack',reminder_id:data.reminder_id});if(state.view==='reminders')showView('reminders');break;
     case 'wake_detected':if(!state.recording)toggleRecording().catch(error=>toast(error.message,true));break;
   }

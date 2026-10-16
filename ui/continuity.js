@@ -5,6 +5,7 @@ async function renderContinuity(panel,current){
     api('conversations'),api('reminders'),api('receipts'),api('continuity/layouts/browser'),api('continuity/digests')]);
   if(!current())return;
   panel.replaceChildren(intro('A clear thread through your work.','Explore independent conversation branches, choose sources for a private digest, and restore a focused layout. Layouts never start recording or execute tools.'));
+  const jobStatus=element('p','','Waiting for owned job status updates.');jobStatus.id='continuity-job-status';jobStatus.setAttribute('role','status');panel.append(jobStatus);
   const branchSection=element('section','card');branchSection.append(element('h2','','Conversation branches'));
   const select=field('Conversation','branchConversation','text',state.conversation||'',chats.conversations.map(c=>[c.id,c.title]));
   const history=element('div','continuity-list');branchSection.append(select,history);
@@ -61,9 +62,10 @@ async function renderContinuity(panel,current){
   }
   saved.layouts.forEach(l=>layouts.append(card(l.title,'Browser · revision '+l.revision,null,[button('Restore layout',async()=>{
     document.body.dataset.rail=l.value.rail;document.body.dataset.density=l.value.density;
-    // Context stays selected metadata: no automatic microphone, provider, or tool action.
+    if(meetingRecorder||meetingAcquiring)throw new Error("Stop and save recording before changing workspace context.");
+    const context=l.value.context_ids[0];if(context){await api("conversations/"+context);state.conversation=context;}
     sessionStorage.setItem('wednesday-layout-'+state.owner,JSON.stringify(l.value));
-    await showView(l.value.view);toast('Layout restored. Your draft is preserved.');
+    await showView(l.value.view);if(context)connect();toast('Layout restored. Your draft is preserved.');
   })])));panel.append(layouts);
   await renderRoutines(panel);
   await renderMeetings(panel);

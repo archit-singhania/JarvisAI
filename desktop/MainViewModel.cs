@@ -103,6 +103,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if(blocked.Contains(eventTurn)&&type is not ("interrupted" or "cleared" or "session"))return;
         switch(type)
         {
+            case "routine_progress":case "meeting_progress":
+                if(data.TryGetProperty("job",out var progress))ConnectionStatus=(type=="routine_progress"?"Routine":"Meeting")+" · "+Text(progress,"status");break;
             case "session":
                 conversation=Text(data,"conversation_id");Messages.Clear();
                 foreach(var m in data.GetProperty("history").EnumerateArray())Messages.Add(new(){Sender=Text(m,"role")=="user"?"You":"Wednesday",Content=Text(m,"content"),IsUser=Text(m,"role")=="user"});

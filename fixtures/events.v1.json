@@ -57,6 +57,33 @@
       "sequence": 6,
       "reminder_id": "fixture-reminder",
       "content": "Review the release."
+    },
+    {
+      "version": 1,
+      "type": "routine_progress",
+      "session_id": "fixture-session",
+      "conversation_id": "fixture-conversation",
+      "turn_id": null,
+      "sequence": 7,
+      "job": {
+        "id": "fixture-run",
+        "status": "completed",
+        "cursor": 1,
+        "updated_at": "2026-10-16T00:00:00+00:00"
+      }
+    },
+    {
+      "version": 1,
+      "type": "meeting_progress",
+      "session_id": "fixture-session",
+      "conversation_id": "fixture-conversation",
+      "turn_id": null,
+      "sequence": 8,
+      "job": {
+        "id": "fixture-meeting",
+        "status": "completed",
+        "updated_at": "2026-10-16T00:00:00+00:00"
+      }
     }
   ]
 }

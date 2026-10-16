@@ -54,3 +54,7 @@ The NSIS package is generated under `aurascript/dist`. [Package-Windows.ps1](scr
 Hosted browser demonstrations must use `DEMO_MODE=true`, HTTPS, an exact allowed origin, private storage and server-side provider credentials. Demo mode blocks local microphone listeners and host launches. The hosted browser has no Electron IPC bridge and cannot run terminal processes or read host files. [Container deployment](deploy/compose.yaml) provides a bounded local showcase service; private desktop operation remains the complete local workflow.
 
 The former scaffold installers now use maintained source and never overwrite the UI. Experimental legacy modules are not routed by the flagship service; old automatic screenshots, global histories and generated editor runtimes are superseded.
+
+## Continuity studio
+
+Routines, independent conversation branches, consented local meeting transcription, selected-source digests and saved layouts are available in the browser and native Windows client. See [manual checks, setup and remaining release work](docs/CONTINUITY-2026-10-16.md).

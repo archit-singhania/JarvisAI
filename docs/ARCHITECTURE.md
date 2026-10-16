@@ -27,3 +27,7 @@ The hosted service exposes only deliberate bounded tools. `DEMO_MODE` blocks hos
 Optional modules are loaded only when selected. The core installation runs without Torch, Whisper, Coqui, wake-word drivers, Ollama SDKs or paid keys. Existing experimental legacy modules remain unrouted. Schema creation is additive and preserves existing flagship records; export and SQLite backup provide recovery paths.
 
 Original vector masters: `ui/assets/wednesday.svg` and `aurascript/src/assets/aurascript.svg`. Raster platform exports live under `desktop/Assets` and `aurascript/assets`. Semantic material, text, spacing, radius and motion rules are implemented in CSS/XAML; glass is concentrated in navigation, toolbars, sheets and controls so content remains readable.
+
+## Continuity services
+
+Owned additive SQLite resources persist branches, routines/runs, meeting jobs, source-selected digests/schedules and client layouts. Bounded background workers execute routine steps and installed local transcription; durable confirmation gates precede consequential actions. Raw service audio is removed after transcript commit unless retention was chosen. A separate observer emits version-1 `routine_progress` and `meeting_progress` control events with job ID/status/revision time only, outside assistant-turn cancellation. Reconnects replay current owned state. Fixtures are in `fixtures/events.v1.json`. Results/transcripts remain authenticated HTTP reads.

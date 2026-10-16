@@ -21,7 +21,7 @@ class Runtime:
     async def send(self, type, **data):
         async with self.lock:
             self.sequence += 1
-            control = type in {'session','reminder','wake_detected','cleared','context_updated','interrupted'}
+            control = type in {'session','reminder','wake_detected','cleared','context_updated','interrupted','routine_progress','meeting_progress'}
             await self.ws.send_json({'version':1,'type':type,'session_id':self.session_id,'conversation_id':self.conversation,'turn_id':None if control else self.turn_id,'sequence':self.sequence,**data})
 
     async def interrupt(self, announce=True):

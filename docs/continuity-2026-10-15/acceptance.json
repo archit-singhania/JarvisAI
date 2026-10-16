@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-16T05:59:47.230Z",
+  "date": "2026-10-16T12:25:42.656Z",
   "branchCreated": true,
   "immutableComparison": true,
   "digestExclusion": true,
@@ -10,5 +10,7 @@
   "consentGate": true,
   "rawAudioRemoved": true,
   "meetingNotesSaved": true,
+  "realtimeRoutineProgress": true,
+  "realtimeMeetingProgress": true,
   "pageErrors": []
 }
