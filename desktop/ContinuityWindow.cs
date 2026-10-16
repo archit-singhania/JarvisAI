@@ -10,7 +10,7 @@ using JarvisAI.Services;
 namespace JarvisAI;
 
 /// <summary>Native owned workspace tools. Opening this window performs reads only.</summary>
-public sealed class ContinuityWindow : Window
+public sealed partial class ContinuityWindow : Window
 {
     private readonly Func<string,HttpMethod?,object?,Task<JsonElement>> api;
     private readonly HttpClient http;
@@ -20,9 +20,12 @@ public sealed class ContinuityWindow : Window
     private readonly AudioService recording=new();
     private readonly System.Windows.Threading.DispatcherTimer limit=new(){Interval=TimeSpan.FromMinutes(30)};
     private bool closing;
-    public ContinuityWindow(Func<string,HttpMethod?,object?,Task<JsonElement>> api,HttpClient http,string conversation,Action<string,string> applyLayout)
+    private readonly Func<string?>? audioChooser;
+    private readonly Func<string,bool>? confirmation;
+    private readonly Func<string,Task>? selectConversation;
+    public ContinuityWindow(Func<string,HttpMethod?,object?,Task<JsonElement>> api,HttpClient http,string conversation,Action<string,string> applyLayout,Func<string?>? audioChooser=null,Func<string,bool>? confirmation=null,Func<string,Task>? selectConversation=null)
     {
-        this.api=api;this.http=http;this.conversation=conversation;this.applyLayout=applyLayout;
+        this.api=api;this.http=http;this.conversation=conversation;this.applyLayout=applyLayout;this.audioChooser=audioChooser;this.confirmation=confirmation;this.selectConversation=selectConversation;
         Title="Wednesday · Continuity studio";Width=1120;Height=840;MinWidth=760;MinHeight=600;WindowStartupLocation=WindowStartupLocation.CenterOwner;
         SetResourceReference(BackgroundProperty,"BgPanel");SetResourceReference(ForegroundProperty,"TextPrimary");
         var dock=new DockPanel();DockPanel.SetDock(status,Dock.Bottom);dock.Children.Add(status);
@@ -46,7 +49,7 @@ public sealed class ContinuityWindow : Window
     private Button Button(StackPanel p,string title,Func<Task> run){var button=new Button{Content=title,HorizontalAlignment=HorizontalAlignment.Left,Margin=new(0,6,0,12)};button.Click+=async(_,_)=>{button.IsEnabled=false;try{await run();}catch(Exception error){status.Text=error.Message;}finally{button.IsEnabled=true;}};p.Children.Add(button);return button;}
     private static CheckBox Check(StackPanel p,string text){var c=new CheckBox{Content=text,Margin=new(0,8,0,12)};p.Children.Add(c);return c;}
     private static ComboBox Choice(StackPanel p,string label,params string[] choices){p.Children.Add(new TextBlock{Text=label});var c=new ComboBox{ItemsSource=choices,SelectedIndex=0,Margin=new(0,6,0,14)};AutomationProperties.SetName(c,label);p.Children.Add(c);return c;}
-    private bool Confirm(string text)=>MessageBox.Show(this,text,"Review this action",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes;
+    private bool Confirm(string text)=>confirmation?.Invoke(text)??(MessageBox.Show(this,text,"Review this action",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes);
     private static string[] Lines(string value)=>value.Split('\n',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
 
     private StackPanel Branches()
@@ -62,7 +65,8 @@ public sealed class ContinuityWindow : Window
             var links=await api("continuity/conversations/"+selected.Id+"/branches",null,null);var parent=links.GetProperty("parent");
             compare.Text=parent.ValueKind==JsonValueKind.Null?"This is an original conversation.":string.Join("\n\n",parent.GetProperty("snapshot").EnumerateArray().Select(m=>Text(m,"role")+": "+Text(m,"content")));
         });
-        Button(p,"Create independent branch",async()=>{if(chats.SelectedItem is not Option selected||messages.SelectedItem is not Option message)throw new InvalidOperationException("Select a conversation and message.");var branch=await api("continuity/conversations/"+selected.Id+"/branches",HttpMethod.Post,new{message_id=int.Parse(message.Id),title=title.Text});status.Text="Branch saved: "+Text(branch,"title")+". Reload conversations to inspect it.";});return p;
+        Button(p,"Create independent branch",async()=>{if(chats.SelectedItem is not Option selected||messages.SelectedItem is not Option message)throw new InvalidOperationException("Select a conversation and message.");var branch=await api("continuity/conversations/"+selected.Id+"/branches",HttpMethod.Post,new{message_id=int.Parse(message.Id),title=title.Text});status.Text="Branch saved: "+Text(branch,"title")+". Reload conversations to inspect it.";});
+        Button(p,"Continue selected conversation in assistant",async()=>{if(recording.IsRecording)throw new InvalidOperationException("Stop and save the meeting recording first.");if(chats.SelectedItem is Option selected&&selectConversation is not null){await selectConversation(selected.Id);Close();}});return p;
     }
     private StackPanel Routines()
     {
@@ -86,7 +90,7 @@ public sealed class ContinuityWindow : Window
     {
         var p=Panel("Consented meeting notes","A provisioned local engine transcribes timestamped segments. Failed jobs retain audio for Retry/Delete. Raw audio is deleted after success unless retention is selected.");var title=Field(p,"Meeting title","Meeting");CheckBox consent=Check(p,"I have participant consent to record/import this meeting."),retain=Check(p,"Retain raw audio after successful transcription.");
         async Task Upload(byte[]? bytes,string? filename){if(consent.IsChecked!=true)throw new InvalidOperationException("Confirm consent first.");using var body=new MultipartFormDataContent();body.Add(new StringContent(title.Text),"title");body.Add(new StringContent("true"),"consent");body.Add(new StringContent(retain.IsChecked==true?"true":"false"),"retain");if(bytes is not null)body.Add(new ByteArrayContent(bytes),"file","meeting.wav");else{if(new FileInfo(filename!).Length>100*1024*1024)throw new InvalidOperationException("Audio limit: 100 MB.");body.Add(new StreamContent(File.OpenRead(filename!)),"file",Path.GetFileName(filename!));}using var response=await http.PostAsync("/api/meetings",body);if(!response.IsSuccessStatusCode)throw new InvalidOperationException("Meeting import failed. Audio was not confirmed saved; retry or keep a local copy.");status.Text="Meeting saved to the local transcription queue.";}
-        Button(p,"Import consented audio",async()=>{if(consent.IsChecked!=true)throw new InvalidOperationException("Confirm consent first.");var file=new OpenFileDialog{Filter="Audio|*.wav;*.mp3;*.m4a;*.ogg;*.webm;*.flac"};if(file.ShowDialog()==true)await Upload(null,file.FileName);});
+        Button(p,"Import consented audio",async()=>{if(consent.IsChecked!=true)throw new InvalidOperationException("Confirm consent first.");if(audioChooser is not null){var chosen=audioChooser();if(chosen is not null)await Upload(null,chosen);}else{var file=new OpenFileDialog{Filter="Audio|*.wav;*.mp3;*.m4a;*.ogg;*.webm;*.flac"};if(file.ShowDialog()==true)await Upload(null,file.FileName);}});
         Button(p,"Start meeting recording",()=>{if(consent.IsChecked!=true)throw new InvalidOperationException("Confirm consent first.");if(recording.IsRecording)throw new InvalidOperationException("A recording is already active.");recording.StartRecording();limit.Start();status.Text="● RECORDING MEETING · Stop recording to save";return Task.CompletedTask;});
         Button(p,"■ Stop and save recording",async()=>{if(!recording.IsRecording)return;limit.Stop();var bytes=await recording.StopRecordingAsync();try{await Upload(bytes,null);}catch{RecoverRecording(bytes);throw;}});
         var selected=new ComboBox{DisplayMemberPath="Title"};p.Children.Add(selected);var transcript=Field(p,"Timestamped transcript","",true);transcript.IsReadOnly=true;TextBox notes=Field(p,"Notes","",true),decisions=Field(p,"Decisions · one per line","",true),reminders=Field(p,"Proposed reminders · one per line","",true);int revision=0;string loaded="";

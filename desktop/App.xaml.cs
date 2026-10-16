@@ -19,6 +19,28 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var continuityCheck=e.Args.FirstOrDefault(a=>a.StartsWith("--continuity-check="));
+        if(continuityCheck is not null)
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            MainWindow? fixtureWindow=null;ContinuityWindow? studio=null;
+            try
+            {
+                var client=Environment.GetEnvironmentVariable("WEDNESDAY_CLIENT_DATA");
+                if(Environment.GetEnvironmentVariable("WEDNESDAY_ACCEPTANCE_MODE")!="1"||client is null||!Path.GetFileName(client).StartsWith("native-fixture-")||File.Exists(Path.Combine(client,"session.json")))throw new InvalidOperationException("Functional acceptance needs a fresh isolated client directory.");
+                var audio=Path.GetFullPath(Environment.GetEnvironmentVariable("WEDNESDAY_ACCEPTANCE_AUDIO")??throw new InvalidOperationException("Synthetic acceptance audio required."));
+                fixtureWindow=new MainWindow();var vm=(MainViewModel)fixtureWindow.DataContext;
+                for(int i=0;i<200&&!File.Exists(Path.Combine(client,"session.json"));i++)await Task.Delay(50);
+                if(!File.Exists(Path.Combine(client,"session.json")))throw new InvalidOperationException("Fixture workspace did not connect: "+vm.ConnectionStatus);
+                vm.InputText="Unsaved acceptance draft";studio=vm.CreateContinuityWindow(()=>audio,_=>true);
+                var result=await studio.VerifyContinuityAsync();
+                if(vm.InputText!="Unsaved acceptance draft")throw new InvalidOperationException("Layout restore changed the unsaved draft.");
+                File.WriteAllText(Path.GetFullPath(continuityCheck[19..]),System.Text.Json.JsonSerializer.Serialize(result,new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
+                studio.Close();fixtureWindow.Release();Shutdown(0);
+            }
+            catch(Exception error){SmokeLog(error.ToString());studio?.Close();fixtureWindow?.Release();Shutdown(1);}
+            return;
+        }
         var audioCheck=e.Args.FirstOrDefault(a=>a.StartsWith("--audio-check="));
         if(audioCheck is not null)
         {

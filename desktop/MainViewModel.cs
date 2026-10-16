@@ -138,11 +138,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if(audio.IsRecording){ConnectionStatus="Stop the voice recording before opening meeting tools.";return;}
         var window=CreateContinuityWindow();window.ShowDialog();
     }
-    public ContinuityWindow CreateContinuityWindow()
+    public ContinuityWindow CreateContinuityWindow(Func<string?>? audioChooser=null,Func<string,bool>? confirmation=null)
     {
         var window=new ContinuityWindow(Api,http,conversation,(rail,density)=>{
             if(Application.Current.MainWindow.Content is System.Windows.Controls.Grid grid){grid.ColumnDefinitions[0].Width=new GridLength(rail=="compact"?180:224);grid.Margin=new Thickness(density=="focused"?12:20);}
-        });if(Application.Current.MainWindow?.IsVisible==true)window.Owner=Application.Current.MainWindow;return window;
+        },audioChooser,confirmation,async identity=>{await Api("conversations/"+identity);audio.StopPlayback();conversation=identity;Section="Assistant";await Connect();});if(Application.Current.MainWindow?.IsVisible==true)window.Owner=Application.Current.MainWindow;return window;
     }
     [RelayCommand] private Task SavePreferences()=>Guard(async()=>{await Api("preferences",HttpMethod.Patch,new{theme=Appearance,palette=Palette,focus=Focus,persona=Persona,timezone=ReminderZone,tts=SpeakResponses,llm_provider=ModelProvider,llm_model=CloudModel,ollama_model=LocalModel,language=Language,reduce_motion=ReduceMotion,reduce_transparency=ReduceTransparency,high_contrast=HighContrast});ThemeManager.Apply(Appearance,ReduceTransparency,HighContrast,Palette);ConnectionStatus="Preferences saved";});
     [RelayCommand] private Task Export()=>Guard(async()=>{var file=new SaveFileDialog{Filter="JSON workspace|*.json",FileName="wednesday-workspace.json"};if(file.ShowDialog()!=true)return;var data=await Api("export");await File.WriteAllTextAsync(file.FileName,JsonSerializer.Serialize(data,new JsonSerializerOptions{WriteIndented=true}));});

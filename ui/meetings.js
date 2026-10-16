@@ -26,7 +26,8 @@ async function renderMeetings(panel){
     catch(error){meetingAcquiring=false;start.disabled=false;pending.remove();throw error;}
     meetingAcquiring=false;pending.remove();
     if(cancelled){stream.getTracks().forEach(t=>t.stop());start.disabled=false;return;}
-    const recorder=new MediaRecorder(stream),chunks=[];let size=0;
+    let recorder;try{recorder=new MediaRecorder(stream);}catch(error){stream.getTracks().forEach(t=>t.stop());start.disabled=false;throw error;}
+      const chunks=[];let size=0;
     const session={recorder,stream};meetingRecorder=session;start.disabled=true;stop.hidden=false;status.textContent='● Recording meeting — microphone active';status.classList.add('recording-active');
     // Keep an always-visible Stop control even if the user navigates to another panel.
     const globalStop=button('■ Stop meeting recording',()=>recorder.stop(),'primary');globalStop.id='meeting-stop-global';document.querySelector('.header-actions').append(globalStop);
