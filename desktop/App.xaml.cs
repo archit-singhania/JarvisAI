@@ -53,7 +53,9 @@ public partial class App : Application
             {
                 if(window.DataContext is MainViewModel vm)await vm.OpenSectionCommand.ExecuteAsync(requestedSection);
             }
-            var visual=(FrameworkElement)window.Content;
+            ContinuityWindow? continuity=null;
+            if(requestedSection=="Continuity"&&window.DataContext is MainViewModel continuityModel){continuity=continuityModel.CreateContinuityWindow();continuity.SelectPanel(e.Args.FirstOrDefault(a=>a.StartsWith("--continuity-panel="))?[19..]??"Branches");}
+            var visual=(FrameworkElement)(continuity?.Content??window.Content);
             visual.Measure(new Size(1220,840));visual.Arrange(new Rect(0,0,1220,840));visual.UpdateLayout();
             var target=new System.Windows.Media.Imaging.RenderTargetBitmap(1220,840,96,96,PixelFormats.Pbgra32);
             var backdrop=new DrawingVisual();using(var drawing=backdrop.RenderOpen())drawing.DrawRectangle((Brush)Resources["BgDeep"],null,new Rect(0,0,1220,840));target.Render(backdrop);
@@ -61,7 +63,7 @@ public partial class App : Application
             var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(target));
             var path=Path.GetFullPath(output[8..]);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             using(var file=File.Create(path))encoder.Save(file);
-            window.Release();Shutdown(0);
+            continuity?.Close();window.Release();Shutdown(0);
         }
         catch(Exception error){SmokeLog(error.ToString());Shutdown(1);}
     }

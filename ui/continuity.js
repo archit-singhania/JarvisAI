@@ -8,9 +8,12 @@ async function renderContinuity(panel,current){
   const branchSection=element('section','card');branchSection.append(element('h2','','Conversation branches'));
   const select=field('Conversation','branchConversation','text',state.conversation||'',chats.conversations.map(c=>[c.id,c.title]));
   const history=element('div','continuity-list');branchSection.append(select,history);
+  let selectionRequest=0;
   const load=async()=>{
+    const selection=++selectionRequest;
     const id=select.querySelector('select').value;if(!id){history.replaceChildren(empty('Create a conversation to explore a branch.'));return;}
     const [chat,links]=await Promise.all([api('conversations/'+id),api('continuity/conversations/'+id+'/branches')]);
+    if(selection!==selectionRequest)return;
     history.replaceChildren();
     if(links.parent){
       const disclosure=element('details');disclosure.append(element('summary','','Compare with immutable parent context'));
@@ -37,6 +40,15 @@ async function renderContinuity(panel,current){
     const date=since.querySelector('input').value;if(!date)throw new Error('Choose a start date.');
     await api('continuity/digests',json('POST',{...Object.fromEntries(Object.entries(chosen).map(([k,v])=>[k,[...v]])),since:date+'T00:00:00Z'}));await showView('continuity');
   },'primary'));
+  const schedule=(await api('continuity/digest-schedule')).schedule;
+  const config=schedule?.configuration||{enabled:false,period:'daily',timezone:state.preferences.timezone||'UTC',hour:9,minute:0,weekday:0};
+  const scheduling=element('details');scheduling.append(element('summary','','Local digest schedule'));
+  const enabled=element('input');enabled.type='checkbox';enabled.checked=config.enabled;const enableLine=element('label','check-field');enableLine.append(enabled,document.createTextNode('Enable scheduled digest from the checked sources.'));scheduling.append(enableLine);
+  const period=field('Frequency','digestPeriod','text',config.period,[['daily','Daily'],['weekly','Weekly']]),zone=field('Schedule timezone','digestZone','text',config.timezone),hour=field('Hour · 0–23','digestHour','number',config.hour),minute=field('Minute · 0–59','digestMinute','number',config.minute),weekday=field('Weekly day · Monday 0 through Sunday 6','digestWeekday','number',config.weekday);
+  scheduling.append(period,zone,hour,minute,weekday,element('p','',schedule?'Next due: '+schedule.next_due+' '+schedule.error:'Schedules run locally while the backend is running.'));
+  scheduling.append(button('Save selected-source schedule',async()=>{
+    await api('continuity/digest-schedule',json('PUT',{enabled:enabled.checked,period:period.querySelector('select').value,timezone:zone.querySelector('input').value,hour:Number(hour.querySelector('input').value),minute:Number(minute.querySelector('input').value),weekday:Number(weekday.querySelector('input').value),...Object.fromEntries(Object.entries(chosen).map(([k,v])=>[k,[...v]]))}));toast('Schedule saved. Only the reviewed selected sources are included.');
+  }));digest.append(scheduling);
   digests.digests.forEach(d=>{const details=element('details');details.append(element('summary','',new Date(d.created_at).toLocaleString()+' · '+d.items.length+' excerpts'),element('p','',d.coverage));d.items.forEach(i=>details.append(card(i.title,i.text,i.kind+' · '+i.source_id,[button('Inspect source',async()=>{
     if(i.kind==='conversation'){state.conversation=i.source_id;await showView('chat');connect();}
     else await showView(i.kind==='reminder'?'reminders':'tools');

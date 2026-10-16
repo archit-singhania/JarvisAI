@@ -55,6 +55,9 @@ def owner(request: Request):
 
 async def reminder_loop():
     while True:
+        from app.continuity import Continuity
+        try:Continuity(store).due_digests()
+        except Exception:logger.exception('Digest scheduling needs attention')
         for reminder in store.due_reminders():
             for runtime in tuple(runtimes):
                 if runtime.owner == reminder['owner']:
@@ -86,7 +89,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Wednesday / AuraScript',version='1.0.0',lifespan=lifespan)
-app.add_middleware(CORSMiddleware,allow_origins=list(origins),allow_credentials=True,allow_methods=['GET','POST','PATCH','DELETE'],allow_headers=['Authorization','Content-Type','X-Requested-With','X-Request-ID'],expose_headers=['X-Request-ID'])
+app.add_middleware(CORSMiddleware,allow_origins=list(origins),allow_credentials=True,allow_methods=['GET','POST','PUT','PATCH','DELETE'],allow_headers=['Authorization','Content-Type','X-Requested-With','X-Request-ID'],expose_headers=['X-Request-ID'])
 
 
 @app.middleware('http')

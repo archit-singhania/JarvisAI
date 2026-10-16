@@ -1,20 +1,32 @@
 'use strict';
 let meetingRecorder=null;
+let meetingAcquiring=false;
+const meetingDrafts=new Map();
+window.addEventListener('beforeunload',event=>{if(meetingRecorder||meetingAcquiring){event.preventDefault();event.returnValue='Stop and save the meeting recording before leaving.';}});
 async function renderMeetings(panel){
+  if(!meetingDrafts.has(state.owner))meetingDrafts.set(state.owner,{title:'Meeting notes',consent:false,retain:false});
+  const draft=meetingDrafts.get(state.owner);
   const {meetings,capability}=await api('meetings');const section=element('section','card');
   section.append(element('h2','','Meeting companion'),element('p','',capability.available?'Local transcription engine is available.':capability.detail));
-  const consent=element('input');consent.type='checkbox';const line=element('label','check-field');line.append(consent,document.createTextNode('I have participant consent to record or import this meeting.'));
-  const retain=element('input');retain.type='checkbox';const retainLine=element('label','check-field');retainLine.append(retain,document.createTextNode('Keep raw audio after successful transcription (off by default).'));
-  const title=field('Meeting title','meetingTitle','text','Meeting notes');const file=element('input');file.type='file';file.accept='.wav,.mp3,.m4a,.ogg,.webm,.flac';file.setAttribute('aria-label','Import meeting audio');
+  const consent=element('input');consent.type='checkbox';consent.checked=draft.consent;consent.onchange=()=>draft.consent=consent.checked;const line=element('label','check-field');line.append(consent,document.createTextNode('I have participant consent to record or import this meeting.'));
+  const retain=element('input');retain.type='checkbox';retain.checked=draft.retain;retain.onchange=()=>draft.retain=retain.checked;const retainLine=element('label','check-field');retainLine.append(retain,document.createTextNode('Keep raw audio after successful transcription (off by default).'));
+  const title=field('Meeting title','meetingTitle','text',draft.title);title.querySelector('input').oninput=e=>draft.title=e.target.value;const file=element('input');file.type='file';file.accept='.wav,.mp3,.m4a,.ogg,.webm,.flac';file.setAttribute('aria-label','Import meeting audio');
   const upload=async(audio)=>{if(!consent.checked)throw new Error('Confirm participant consent first.');const data=new FormData();data.append('file',audio);data.append('title',title.querySelector('input').value);data.append('consent','true');data.append('retain',String(retain.checked));await api('meetings',{method:'POST',body:data});toast('Meeting saved to the transcription queue.');await showView('continuity');};
   file.onchange=()=>{if(file.files[0])upload(file.files[0]).catch(e=>toast(e.message,true));};
   const status=element('p','','Microphone idle');status.setAttribute('role','status');
   const stop=button('■ Stop meeting recording',()=>{if(meetingRecorder?.recorder.state==='recording')meetingRecorder.recorder.stop();});stop.hidden=true;
   const start=button('Record consented meeting',async()=>{
     if(!consent.checked)throw new Error('Confirm participant consent first.');
-    if(meetingRecorder)throw new Error('A recording is already active. Use its Stop control.');
+    if(meetingRecorder||meetingAcquiring)throw new Error('A recording or microphone request is already active. Use its Stop control.');
     if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder)throw new Error('Recording is unavailable; import an audio file instead.');
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true});const recorder=new MediaRecorder(stream),chunks=[];let size=0;
+    meetingAcquiring=true;start.disabled=true;let cancelled=false;
+    const pending=button('Cancel meeting microphone request',()=>{cancelled=true;pending.remove();status.textContent='Microphone request cancelled; any late stream will be released.';},'primary');document.querySelector('.header-actions').append(pending);
+    let stream;
+    try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}
+    catch(error){meetingAcquiring=false;start.disabled=false;pending.remove();throw error;}
+    meetingAcquiring=false;pending.remove();
+    if(cancelled){stream.getTracks().forEach(t=>t.stop());start.disabled=false;return;}
+    const recorder=new MediaRecorder(stream),chunks=[];let size=0;
     const session={recorder,stream};meetingRecorder=session;start.disabled=true;stop.hidden=false;status.textContent='● Recording meeting — microphone active';status.classList.add('recording-active');
     // Keep an always-visible Stop control even if the user navigates to another panel.
     const globalStop=button('■ Stop meeting recording',()=>recorder.stop(),'primary');globalStop.id='meeting-stop-global';document.querySelector('.header-actions').append(globalStop);

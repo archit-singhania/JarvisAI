@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -42,6 +43,24 @@ class DigestInput(BaseModel):
         return value.astimezone(timezone.utc)
 
 
+class ScheduleInput(BaseModel):
+    enabled: bool = False
+    period: Literal['daily','weekly'] = 'daily'
+    timezone: str = Field(default='UTC',max_length=100)
+    hour: int = Field(default=9,ge=0,le=23)
+    minute: int = Field(default=0,ge=0,le=59)
+    weekday: int = Field(default=0,ge=0,le=6)
+    conversation_ids: list[str] = Field(default_factory=list,max_length=30)
+    reminder_ids: list[str] = Field(default_factory=list,max_length=100)
+    receipt_ids: list[str] = Field(default_factory=list,max_length=100)
+    @field_validator('timezone')
+    @classmethod
+    def zone(cls,value):
+        try:ZoneInfo(value)
+        except (ValueError,ZoneInfoNotFoundError):raise ValueError('Choose an IANA timezone')
+        return value
+
+
 def router(get_store, owner):
     routes = APIRouter(prefix='/api/continuity', tags=['Continuity'])
 
@@ -79,5 +98,12 @@ def router(get_store, owner):
     @routes.get('/digests')
     def digests(identity=Depends(owner)):
         return {'digests': service().digests(identity)}
+
+    @routes.get('/digest-schedule')
+    def schedule(identity=Depends(owner)):return {'schedule':service().schedule(identity)}
+
+    @routes.put('/digest-schedule')
+    def save_schedule(body:ScheduleInput,identity=Depends(owner)):
+        return {'schedule':service().schedule(identity,body.model_dump())}
 
     return routes

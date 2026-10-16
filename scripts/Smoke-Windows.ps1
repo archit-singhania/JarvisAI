@@ -44,6 +44,9 @@ try {
   Invoke-RestMethod "$ServiceUrl/api/preferences" -Method Patch -Headers $taskHeaders -ContentType 'application/json' -Body $taskLight | Out-Null
   Invoke-NativeCheck @("--smoke=$(Join-Path $OutputDirectory 'wpf-desktop-light.png')")
   Invoke-NativeCheck @("--smoke=$(Join-Path $OutputDirectory 'wpf-preferences-light.png')",'--smoke-section=Preferences')
+  foreach($taskPanel in @('Branches','Routines','Meetings','Digests','Layouts')){
+    Invoke-NativeCheck @("--smoke=$(Join-Path $OutputDirectory ('wpf-continuity-'+$taskPanel.ToLower()+'.png'))",'--smoke-section=Continuity',"--continuity-panel=$taskPanel")
+  }
   $taskReadback=Invoke-RestMethod "$ServiceUrl/api/preferences" -Headers $taskHeaders
   if($taskReadback.theme -ne 'light' -or $taskReadback.timezone -ne 'Europe/London'){throw 'Native fixture preference readback failed'}
   if((Get-FileHash (Join-Path $OutputDirectory 'wpf-desktop-dark.png')).Hash -eq (Get-FileHash (Join-Path $OutputDirectory 'wpf-desktop-light.png')).Hash){throw 'Both appearance renders unexpectedly match'}

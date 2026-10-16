@@ -108,7 +108,9 @@ async function showView(view){
       const grid=element('div','card-grid');workflows.workflows.forEach(w=>grid.append(card(w.title,'Saved sequence · '+JSON.parse(w.content).length+' steps',null,[button('Run workflow',async()=>{const result=await api('workflows/'+w.id+'/run',{method:'POST'});toast(result.results.map(r=>r.content).join(' · '));showView(view);}),button('Remove',async()=>{await api('records/'+w.id,{method:'DELETE'});showView(view);})])));panel.append(grid);
       panel.append(intro('Execution receipts','Results recorded by the service, including unavailable tools.'));const receiptsGrid=element('div','card-grid');receipts.receipts.forEach(r=>receiptsGrid.append(card(r.tool,r.result.content,new Date(r.created_at).toLocaleString())));panel.append(receipts.receipts.length?receiptsGrid:empty('Run your first tool to create an execution receipt.'));
     }else if(view==='continuity'){
-      await renderContinuity(panel,()=>request===viewRequest);
+      const content=element('div');
+      await renderContinuity(content,()=>request===viewRequest);
+      if(request===viewRequest)panel.replaceChildren(...content.childNodes);
     }else if(view==='settings'){
       const caps=await api('capabilities');if(request!==viewRequest)return;const p=state.preferences;panel.replaceChildren(intro('Make it feel like yours.','Choose an engine, a focus, and an appearance. Cloud providers require backend API keys; local inference requires a running Ollama model.'));
       const form=element('form','settings-form card');const grid=element('div','settings-grid');

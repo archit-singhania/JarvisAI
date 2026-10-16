@@ -1,0 +1,7 @@
+# Explicit optional local meeting runtime; startup never installs these.
+-r requirements-core.txt
+faster-whisper==1.2.1
+# PyAV 19 removed metadata_errors; this is the verified compatible decoder.
+av==16.0.1
+ctranslate2==4.8.3
+onnxruntime==1.31.0

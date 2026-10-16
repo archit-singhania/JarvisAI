@@ -19,6 +19,7 @@ Get-ChildItem -LiteralPath $taskAppRoot -Recurse -File -Filter '*.py' | ForEach-
 }
 Copy-Item -LiteralPath (Join-Path $taskRepo 'backend/requirements-core.txt') -Destination (Join-Path $taskPackage 'backend')
 Copy-Item -LiteralPath (Join-Path $taskRepo 'backend/requirements-speech.txt') -Destination (Join-Path $taskPackage 'backend')
+Copy-Item -LiteralPath (Join-Path $taskRepo 'backend/requirements-meetings.txt') -Destination (Join-Path $taskPackage 'backend')
 Copy-Item -LiteralPath (Join-Path $taskRepo 'backend/.env.example') -Destination (Join-Path $taskPackage 'backend')
 Copy-Item -LiteralPath (Join-Path $taskRepo 'ui') -Destination $taskPackage -Recurse
 $taskPackageReadme=@'

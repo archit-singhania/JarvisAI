@@ -10,6 +10,7 @@
         <Button Content="◷  Reminders" Command="{Binding OpenSectionCommand}" CommandParameter="Reminders"/>
         <Button Content="⌘  Tools" Command="{Binding OpenSectionCommand}" CommandParameter="Tools"/>
         <Button Content="↻  Workflows" Command="{Binding OpenSectionCommand}" CommandParameter="Workflows"/>
+        <Button Content="⑂  Continuity studio" Command="{Binding OpenContinuityCommand}"/>
       </StackPanel>
       <StackPanel DockPanel.Dock="Bottom"><Button Content="Preferences" Command="{Binding OpenPreferencesCommand}"/><Button Content="Export workspace ↗" Command="{Binding ExportCommand}"/><Button Content="Reconnect" Command="{Binding ReconnectCommand}"/><TextBlock Text="{Binding ConnectionStatus}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="5,12,5,8"/></StackPanel><Grid/>
     </DockPanel></Border>
