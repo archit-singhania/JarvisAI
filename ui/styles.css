@@ -12,6 +12,16 @@ html[data-theme=light]{color-scheme:light;--bg:#f3f1ec;--surface:#fffefa;--surfa
 .panel-view > section.card { margin-block:24px; }
 .panel-view details { margin-block:14px; }
 .panel-view summary { cursor:pointer; padding:12px 0; font-weight:600; }
+.panel-view > section.card { border:1px solid var(--line); border-radius:24px; box-shadow:0 8px 24px #00000008; }
+.panel-view > section.card h2 { font-family:var(--font-display); letter-spacing:-.035em; line-height:1.25; }
+.continuity-list { padding:4px; scrollbar-gutter:stable; }
+.continuity-comparison > * { min-width:0; overflow-wrap:anywhere; }
+.panel-view details { border-bottom:1px solid var(--line); padding-bottom:12px; }
+.panel-view summary::marker { color:var(--accent); }
+.panel-view summary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:8px; }
+.panel-view :is(input, textarea, select):focus { border-color:var(--accent); }
+.panel-view textarea { line-height:1.7; }
+.panel-view .card:focus-within { border-color:var(--accent); }
 body[data-density="focused"] .welcome .suggestions { display:none; }
 @media(min-width:900px){body[data-rail="compact"] .app-shell{grid-template-columns:210px minmax(0,1fr)}body[data-rail="compact"] .brand small{display:none}}
 @media(max-width:650px){.continuity-comparison{grid-template-columns:1fr}}
