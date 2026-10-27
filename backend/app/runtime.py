@@ -78,7 +78,7 @@ class Runtime:
             if not text:
                 return
             self.store.message(self.owner,self.conversation,'user',text)
-            sources = self.store.retrieve(self.owner,text)
+            sources = self.store.retrieve(self.owner,text,conversation_id=self.conversation)
             await self.send('stream_start',sources=[{k:v for k,v in s.items() if k!='content'} for s in sources])
             async def speak_sentences():
                 index = 0

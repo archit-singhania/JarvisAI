@@ -30,6 +30,7 @@ class Workspace:
             CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, owner TEXT NOT NULL, tool TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS owned_conversations ON conversations(owner,created_at);
             CREATE INDEX IF NOT EXISTS owned_records ON records(owner,kind);
+            CREATE TABLE IF NOT EXISTS memory_revisions(memory_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,version INTEGER NOT NULL,title TEXT NOT NULL,content TEXT NOT NULL,metadata TEXT NOT NULL,recorded_at TEXT NOT NULL,PRIMARY KEY(memory_id,version));
             ''')
 
     @contextmanager
@@ -100,6 +101,9 @@ class Workspace:
             result = [dict(r) for r in rows]
         for row in result:
             row['metadata'] = json.loads(row['metadata'])
+            if row['kind'] == 'memory':
+                from app.memories import metadata
+                row['metadata'] = metadata(row['metadata'])
         return result
 
     def save_record(self, owner, kind, title, content, metadata=None, identity=None):
@@ -115,17 +119,21 @@ class Workspace:
         with self.db() as db:
             return db.execute('DELETE FROM records WHERE id=? AND owner=?', (identity, owner)).rowcount > 0
 
-    def retrieve(self, owner, query, limit=3):
+    def retrieve(self, owner, query, limit=3, conversation_id=None):
         words = set(re.findall(r'\w+', query.lower())) - {'the', 'is', 'a', 'of', 'and', 'to', 'what', 'my'}
         ranked = []
         for record in self.records(owner):
             if record['kind'] not in ('document', 'memory'):
                 continue
+            if record['kind'] == 'memory':
+                from app.memories import eligible
+                if not eligible(record['metadata'], conversation_id):
+                    continue
             for offset in range(0, len(record['content']), 1200):
                 chunk = record['content'][offset:offset+1500]
                 matched = words.intersection(re.findall(r'\w+', chunk.lower()))
                 if matched:
-                    ranked.append((len(matched), {'id': record['id'], 'title': record['title'], 'content': chunk, 'offset': offset}))
+                    ranked.append((len(matched), {'id': record['id'], 'title': record['title'], 'content': chunk, 'offset': offset, 'kind': record['kind'], **({'memory_version': record['metadata']['version'], 'memory_origin': record['metadata']['origin'], 'scope': record['metadata']['scope']} if record['kind'] == 'memory' else {})}))
         return [r[1] for r in sorted(ranked, key=lambda x: x[0], reverse=True)[:limit]]
 
     def prefs(self, owner, patch=None):

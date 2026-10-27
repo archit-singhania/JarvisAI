@@ -217,21 +217,44 @@ class RecordInput(BaseModel):
     content: str = Field(min_length=1,max_length=200000)
 
 
+class MemoryInput(RecordInput):
+    expected_version: int | None = Field(default=None, ge=1)
+    origin: Literal['explicit_user', 'selected_conversation', 'approved_suggestion'] | None = None
+    source_conversation_id: str | None = Field(default=None, max_length=100)
+    source_message_id: int | None = Field(default=None, ge=1)
+    confirmed: bool = False
+    scope: Literal['workspace', 'conversation'] | None = None
+    conversation_id: str | None = Field(default=None, max_length=100)
+    expires_at: str | None = Field(default=None, max_length=60)
+
+
 @app.get('/api/memories')
 def memories(identity=Depends(owner)):
     return {'memories':store.records(identity,'memory')}
 
 
 @app.post('/api/memories')
-def add_memory(body: RecordInput,identity=Depends(owner)):
-    return {'id':store.save_record(identity,'memory',body.title,body.content)}
+def add_memory(body: MemoryInput,identity=Depends(owner)):
+    from app.memories import Memories
+    return Memories(store).save(identity,body.model_dump(exclude_unset=True))
 
 
 @app.patch('/api/memories/{record_id}')
-def edit_memory(record_id: str,body: RecordInput,identity=Depends(owner)):
-    if not any(r['id']==record_id and r['kind']=='memory' for r in store.records(identity)):
-        raise KeyError(record_id)
-    return {'id':store.save_record(identity,'memory',body.title,body.content,identity=record_id)}
+def edit_memory(record_id: str,body: MemoryInput,identity=Depends(owner)):
+    from app.memories import Memories
+    return Memories(store).save(identity,body.model_dump(exclude_unset=True),record_id)
+
+
+@app.get('/api/memories/export')
+def export_memories(identity=Depends(owner)):
+    from app.memories import Memories
+    return {'version': 1, 'exported_at': datetime.now(timezone.utc).isoformat(), 'memories': Memories(store).export(identity)}
+
+
+@app.get('/api/memories/{record_id}')
+def inspect_memory(record_id: str,identity=Depends(owner)):
+    from app.memories import Memories
+    return Memories(store).inspect(identity,record_id)
 
 
 @app.delete('/api/records/{record_id}')
