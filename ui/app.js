@@ -36,7 +36,7 @@ function addMessage(role,content,sources=[],animate=true){
   $('welcome').hidden=true;$('messages').classList.add('has-messages');
   const row=element('article','message '+role);row.append(element('div','message-meta',role==='assistant'?'◉ Wednesday':'You'));
   const body=element('div','message-content',content);row.append(body);
-  if(sources.length){const list=element('div','sources');sources.forEach((source,i)=>list.append(element('span','source',`[${i+1}] ${source.title}`)));row.append(list);}
+  if(sources.length){const list=element('div','sources');sources.forEach((source,i)=>list.append(source.kind==='memory'?button(`[${i+1}] Memory: ${source.title} · v${source.memory_version}`,()=>inspectMemory(source.id),'source'):element('span','source',`[${i+1}] ${source.title}`)));row.append(list);}
   $('messages').append(row);if(animate)motion.enter(row);$('messages').scrollTop=$('messages').scrollHeight;return body;
 }
 function dispatch(data){
@@ -94,9 +94,7 @@ async function showView(view){
       panel.append(button('＋ Import document',()=>$('document-input').click(),'primary'));
       const grid=element('div','card-grid');grid.style.marginTop='22px';documents.forEach(d=>grid.append(card(d.title,'Available for source retrieval.',`${d.metadata.bytes.toLocaleString()} bytes · Local lexical retrieval`,[button('Remove',async()=>{await api('records/'+d.id,{method:'DELETE'});showView(view);})])));panel.append(documents.length?grid:empty('Your knowledge library is empty. Import a PDF, Markdown, text, or source file to begin.'));
     }else if(view==='memory'){
-      const {memories}=await api('memories');if(request!==viewRequest)return;panel.replaceChildren(intro('Remember what matters.','Save useful preferences and facts. You control what is remembered, edited, and removed.'));
-      const editor=m=>editDialog(m?'Edit memory':'A new memory',[field('Title','title','text',m?.title||''),field('What should Wednesday remember?','content','textarea',m?.content||'')],body=>api('memories'+(m?'/'+m.id:''),json(m?'PATCH':'POST',body)));
-      panel.append(button('＋ Add memory',()=>editor(),'primary'));const grid=element('div','card-grid');grid.style.marginTop='22px';memories.forEach(m=>grid.append(card(m.title,m.content,null,[button('Edit',()=>editor(m)),button('Remove',async()=>{await api('records/'+m.id,{method:'DELETE'});showView(view);})])));panel.append(memories.length?grid:empty('No memories saved yet.'));
+      await renderMemories(panel,()=>request===viewRequest);
     }else if(view==='reminders'){
       const {reminders}=await api('reminders');if(request!==viewRequest)return;panel.replaceChildren(intro('Make room for the important things.','Reminders persist across restarts. Due reminders are delivered when your workspace is connected.'));
       panel.append(button('＋ Schedule reminder',()=>editDialog('Schedule a reminder',[field('Reminder','text'),field('Date and time in the timezone below','local_time','datetime-local'),field('Timezone','timezone','text',state.preferences.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone)],body=>{if(!body.local_time)throw new Error('Choose a valid date and time.');return api('reminders',json('POST',{text:body.text,due_at:body.local_time,timezone:body.timezone}));}),'primary'));

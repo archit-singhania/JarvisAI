@@ -30,7 +30,7 @@ public sealed partial class ContinuityWindow : Window
         SetResourceReference(BackgroundProperty,"BgPanel");SetResourceReference(ForegroundProperty,"TextPrimary");
         var dock=new DockPanel();DockPanel.SetDock(status,Dock.Bottom);dock.Children.Add(status);
         var tabs=new TabControl{Margin=new(18)};
-        AddTab(tabs,"Branches",Branches());AddTab(tabs,"Routines",Routines());AddTab(tabs,"Meetings",Meetings());AddTab(tabs,"Digests",Digests());AddTab(tabs,"Layouts",Layouts());dock.Children.Add(tabs);Content=dock;
+        AddTab(tabs,"Branches",Branches());AddTab(tabs,"Routines",Routines());AddTab(tabs,"Meetings",Meetings());AddTab(tabs,"Digests",Digests());AddTab(tabs,"Layouts",Layouts());AddTab(tabs,"Memory provenance",MemoryProvenance());dock.Children.Add(tabs);Content=dock;
         limit.Tick+=async(_,_)=>{limit.Stop();if(recording.IsRecording){var bytes=await recording.StopRecordingAsync();RecoverRecording(bytes);status.Text="Recording reached its 30-minute limit; save the WAV for import.";}};
         Closing+=async(_,e)=>{
             if(recording.IsRecording&&!closing){e.Cancel=true;if(MessageBox.Show(this,"Stop recording and save the audio before closing?","Meeting recording",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;

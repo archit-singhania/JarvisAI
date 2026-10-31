@@ -25,3 +25,5 @@ html[data-theme=light]{color-scheme:light;--bg:#f3f1ec;--surface:#fffefa;--surfa
 body[data-density="focused"] .welcome .suggestions { display:none; }
 @media(min-width:900px){body[data-rail="compact"] .app-shell{grid-template-columns:210px minmax(0,1fr)}body[data-rail="compact"] .brand small{display:none}}
 @media(max-width:650px){.continuity-comparison{grid-template-columns:1fr}}
+
+.memory-inspector{width:min(740px,calc(100vw - 32px));max-height:85vh;overflow:auto}.memory-inspector .card{margin-block:12px;overflow-wrap:anywhere}.memory-inspector>button{margin:12px 8px 0 0}
