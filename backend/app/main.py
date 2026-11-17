@@ -78,12 +78,15 @@ async def lifespan(app):
     Meetings(store).recover()
     meeting_task = asyncio.create_task(meeting_loop())
     progress_task = asyncio.create_task(progress_loop())
+    from app.expansion_api import watch_loop
+    watch_task = asyncio.create_task(watch_loop(store))
     yield
     task.cancel()
     routine_task.cancel()
     meeting_task.cancel()
     progress_task.cancel()
-    await asyncio.gather(task,routine_task,meeting_task,progress_task,return_exceptions=True)
+    watch_task.cancel()
+    await asyncio.gather(task,routine_task,meeting_task,progress_task,watch_task,return_exceptions=True)
     for runtime in tuple(runtimes):
         await runtime.interrupt(False)
     if wake_listener:
@@ -616,4 +619,6 @@ async def routine_loop():
             logger.exception('Routine worker failed; active steps require inspection before retry')
         await asyncio.sleep(.5)
 
+from app.expansion_api import router as expansion_router
+app.include_router(expansion_router(lambda: store, owner))
 app.mount('/ui',StaticFiles(directory=str(Path(__file__).resolve().parents[2]/'ui'),html=True),name='ui')

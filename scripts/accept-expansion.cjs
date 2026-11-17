@@ -1,0 +1,42 @@
+'use strict';
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict');
+(async()=>{
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(process.env.WEDNESDAY_URL||'http://127.0.0.1:8799/ui/');
+  await page.getByText('Workspace connected',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Local workspace'}).click();
+  await page.getByRole('heading',{name:'Offline operations',exact:true}).waitFor();
+  await context.setOffline(true);
+  await page.locator('#field-title').fill('Offline acceptance');
+  await page.locator('#field-content').fill('violet offline evidence');
+  await page.getByRole('button',{name:'Save to local queue'}).click();
+  await page.getByText('pending',{exact:true}).waitFor();
+  await context.setOffline(false);
+  await page.getByRole('button',{name:'Synchronize now'}).click();
+  await page.getByText('completed · revision 1',{exact:true}).waitFor();
+  await page.reload();await page.getByText('Workspace connected',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Local workspace'}).click();
+  await page.getByText('completed · revision 1',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Propose a time block'}).click();
+  await page.getByRole('dialog').locator('#field-title').fill('Focused work');
+  await page.getByRole('dialog').getByRole('button',{name:'Save',exact:true}).click();
+  await page.getByRole('button',{name:'Approve this exact block'}).click();
+  await page.getByRole('heading',{name:'Focused work',exact:true}).waitFor();
+  const source=await page.evaluate(async()=>{const r=await fetch('/api/search?q=violet');return (await r.json()).sources[0].id;});
+  await page.getByRole('button',{name:'Save a reviewed evaluation'}).click();
+  await page.getByRole('dialog').locator('#field-title').fill('Source acceptance');
+  await page.getByRole('dialog').locator('#field-query').fill('violet');
+  await page.getByRole('dialog').locator('#field-sources').fill(source);
+  await page.getByRole('dialog').getByRole('button',{name:'Save',exact:true}).click();
+  await page.getByRole('button',{name:'Run read-only evaluation'}).click();
+  await page.getByRole('heading',{name:'Evaluation passed'}).waitFor();
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Phone horizontal overflow');
+  assert.deepEqual(errors,[]);
+  console.log('PASS offline/reconnect/reload, calendar approval, evaluation, phone overflow, JavaScript errors');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

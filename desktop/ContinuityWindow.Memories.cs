@@ -15,11 +15,11 @@ public sealed partial class ContinuityWindow
         var memories=new ComboBox{DisplayMemberPath="Title",Margin=new(0,6,0,14)};
         AutomationProperties.SetName(memories,"Saved memory");p.Children.Add(memories);
         string? editing=null;int version=0;JsonElement? source=null;
-        var title=Field(p,"Memory title"),content=Field(p,"Memory content","",true);
+        var title=Field(p,"Memory title");var content=Field(p,"Memory content","",true);
         var scope=Choice(p,"Memory scope","workspace","conversation");
         var chats=new ComboBox{DisplayMemberPath="Title",Margin=new(0,6,0,14)};AutomationProperties.SetName(chats,"Scope and source conversation");p.Children.Add(chats);
-        var expiry=Field(p,"Expiry · ISO timestamp with timezone, or blank",""),history=Field(p,"Source and revision history","",true);history.IsReadOnly=true;
-        async Task Load(){var data=await api("memories",null,null);memories.ItemsSource=data.GetProperty("memories").EnumerateArray().Select(m=>new Option(Text(m,"id"),Text(m,"title"))).ToList();var conversations=await api("conversations",null,null);chats.ItemsSource=conversations.GetProperty("conversations").EnumerateArray().Select(c=>new Option(Text(c,"id"),Text(c,"title"))).ToList();}
+        var expiry=Field(p,"Expiry · ISO timestamp with timezone, or blank","");var history=Field(p,"Source and revision history","",true);history.IsReadOnly=true;
+        async Task Load(){var selectedChat=(chats.SelectedItem as Option)?.Id;var selectedMemory=editing??(memories.SelectedItem as Option)?.Id;var data=await api("memories",null,null);memories.ItemsSource=data.GetProperty("memories").EnumerateArray().Select(m=>new Option(Text(m,"id"),Text(m,"title"))).ToList();var conversations=await api("conversations",null,null);chats.ItemsSource=conversations.GetProperty("conversations").EnumerateArray().Select(c=>new Option(Text(c,"id"),Text(c,"title"))).ToList();chats.SelectedItem=chats.Items.Cast<Option>().FirstOrDefault(c=>c.Id==selectedChat);memories.SelectedItem=memories.Items.Cast<Option>().FirstOrDefault(m=>m.Id==selectedMemory);}
         Button(p,"Load memories and conversations",Load);
         Button(p,"Inspect selected memory",async()=>{
             if(memories.SelectedItem is not Option selected)throw new InvalidOperationException("Select a saved memory.");

@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {owner:null, conversation:null, socket:null, preferences:{}, view:'chat', message:null, turn:null, blocked:new Set(), reconnect:null, recording:null, acquiring:false, audio:null, queue:[], objectUrl:null};
-const titles = {chat:'Assistant',knowledge:'Knowledge',memory:'Memory',reminders:'Reminders',tools:'Tools & workflows',continuity:'Continuity studio',settings:'Preferences'};
+const titles = {expansion:'Local workspace',chat:'Assistant',knowledge:'Knowledge',memory:'Memory',reminders:'Reminders',tools:'Tools & workflows',continuity:'Continuity studio',settings:'Preferences'};
 let toastTimer,viewRequest=0,lastProgress=0;
 const motion=window.WednesdayMotion;
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;motion.enter($('toast'));clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500);}
@@ -89,7 +89,9 @@ async function showView(view){
   const request=++viewRequest;state.view=view;$('view-title').textContent=titles[view];document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.view===view));$('chat-view').hidden=view!=='chat';$('panel-view').hidden=view==='chat';document.querySelectorAll('.nav').forEach(n=>n.setAttribute('aria-current',n.dataset.view===view?'page':'false'));if(view==='chat'){motion.enter($('chat-view'));return;}
   const panel=$('panel-view');panel.replaceChildren(empty('Loading your workspace…'));panel.setAttribute('aria-busy','true');motion.enter(panel);
   try{
-    if(view==='knowledge'){
+    if(view==='expansion'){
+      await renderExpansion(panel,()=>request===viewRequest);
+    }else if(view==='knowledge'){
       const {documents}=await api('documents');if(request!==viewRequest)return;panel.replaceChildren(intro('Keep your context close.','Bring in documents, notes, and source files. Wednesday retrieves matching excerpts locally and shows the sources used in each answer.'));
       panel.append(button('＋ Import document',()=>$('document-input').click(),'primary'));
       const grid=element('div','card-grid');grid.style.marginTop='22px';documents.forEach(d=>grid.append(card(d.title,'Available for source retrieval.',`${d.metadata.bytes.toLocaleString()} bytes · Local lexical retrieval`,[button('Remove',async()=>{await api('records/'+d.id,{method:'DELETE'});showView(view);})])));panel.append(documents.length?grid:empty('Your knowledge library is empty. Import a PDF, Markdown, text, or source file to begin.'));
