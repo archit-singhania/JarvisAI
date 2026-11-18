@@ -1,6 +1,8 @@
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows.Controls;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using Microsoft.Win32;
 
 namespace JarvisAI;
@@ -18,11 +20,16 @@ public sealed partial class ContinuityWindow
     {
         var p=Panel("Persist through disconnections","Load your workspace identity once, then save local operations. Synchronization never runs commands or sends external writes. Conflicts retain the submitted and current versions.");
         string? owner=null;string? path=null;
+        var queueRoot=Path.Combine(Environment.GetEnvironmentVariable("WEDNESDAY_CLIENT_DATA")??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Wednesday"),"offline");
+        var identityPath=Path.Combine(queueRoot,"last-owner.txt");
+        void SelectOwner(string value){if(!System.Text.RegularExpressions.Regex.IsMatch(value,"^[a-f0-9]{32}$"))throw new InvalidOperationException("Invalid identity");owner=value;path=Path.Combine(queueRoot,owner+".json");}
+        if(File.Exists(identityPath)){try{SelectOwner(File.ReadAllText(identityPath));}catch{status.Text="Saved offline identity needs reconnection.";}}
         var kind=Choice(p,"Edit type","note","draft","memory","reminder");
         TextBox title=Field(p,"Title"),content=Field(p,"Content","",true),id=Field(p,"Record ID (blank for new note/draft/reminder)"),revision=Field(p,"Expected revision (memory: current version)","0"),due=Field(p,"Reminder date with UTC offset"),output=Field(p,"Local queue and results","",true);output.IsReadOnly=true;
         List<JsonElement> Read()=>path!=null&&File.Exists(path)?JsonSerializer.Deserialize<List<JsonElement>>(File.ReadAllText(path))??new():new();
         void Write(List<JsonElement> rows){if(path==null)throw new InvalidOperationException("Load identity first.");Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllText(path+".partial",JsonSerializer.Serialize(rows));File.Move(path+".partial",path,true);output.Text=JsonSerializer.Serialize(rows,Pretty);}
-        Button(p,"Load identity and saved queue",async()=>{var session=await api("session",HttpMethod.Post,null);owner=Text(session,"owner_id");if(!System.Text.RegularExpressions.Regex.IsMatch(owner,"^[a-f0-9]{32}$"))throw new InvalidOperationException("Invalid identity");path=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Wednesday","offline",owner+".json");output.Text=JsonSerializer.Serialize(Read(),Pretty);});
+        Button(p,"Load identity and saved queue",async()=>{var session=await api("session",HttpMethod.Post,null);SelectOwner(Text(session,"owner_id"));Directory.CreateDirectory(queueRoot);File.WriteAllText(identityPath+".partial",owner);File.Move(identityPath+".partial",identityPath,true);output.Text=JsonSerializer.Serialize(Read(),Pretty);});
+        output.Text=JsonSerializer.Serialize(Read(),Pretty);
         Button(p,"Save local operation",()=>{
             if(owner==null)throw new InvalidOperationException("Load identity once before going offline.");
             if(string.IsNullOrWhiteSpace(title.Text)||string.IsNullOrWhiteSpace(content.Text))throw new InvalidOperationException("Enter title and content.");
@@ -45,9 +52,17 @@ public sealed partial class ContinuityWindow
     }
     private StackPanel CalendarPlanning()
     {
-        var p=Panel("Review your time","Local calendar files and conflict-checked proposals. UTC/IANA-timezone timed-event import; recurring/all-day conversion and Google requires configured host credentials and explicit calendar selection.");
+        var p=Panel("Review your time","Local calendar files and conflict-checked proposals. Import UTC/IANA timed events and all-day dates. Open-ended series report their planning coverage. Google requires a configured account and explicit calendar selection.");
         TextBox title=Field(p,"Block title"),start=Field(p,"Working-window start with UTC offset",DateTimeOffset.Now.ToString("O")),end=Field(p,"Working-window end with UTC offset",DateTimeOffset.Now.AddHours(8).ToString("O")),minutes=Field(p,"Duration in minutes","30"),output=Field(p,"Calendar and proposed changes","",true);output.IsReadOnly=true;string? proposal=null;
         Button(p,"Load calendar",async()=>ShowJson(output,await api("expansion/calendar",null,null)));
+        Button(p,"Sign in with Google",async()=>{
+            var result=await api("expansion/calendar/google/oauth/start",HttpMethod.Post,null);
+            if(!Uri.TryCreate(Text(result,"url"),UriKind.Absolute,out var url) ||
+               url.Scheme!=Uri.UriSchemeHttps || url.Host!="accounts.google.com")
+                throw new InvalidOperationException("Invalid Google sign-in address.");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url.AbsoluteUri){UseShellExecute=true});
+            status.Text="Finish signing in in your browser, then list your Google calendars here.";
+        });
         var calendarId=Field(p,"Selected Google calendar ID");
         Button(p,"List configured Google calendars",async()=>ShowJson(output,await api("expansion/calendar/google",null,null)));
         Button(p,"Connect selected Google calendar",async()=>{if(Confirm("Use this configured account and calendar: "+calendarId.Text+"?"))ShowJson(output,await api("expansion/calendar/google/connect",HttpMethod.Post,new{calendar=calendarId.Text,confirmed=true}));});
@@ -75,6 +90,28 @@ public sealed partial class ContinuityWindow
         TextBox title=Field(p,"Case title"),query=Field(p,"Redacted query","",true),sources=Field(p,"Expected owned source IDs, one per line","",true),id=Field(p,"Case ID to run/delete"),output=Field(p,"Cases and measurements","",true);output.IsReadOnly=true;
         Button(p,"Load cases and results",async()=>ShowJson(output,await api("expansion/evaluations",null,null)));
         Button(p,"Save reviewed case",async()=>{if(Confirm("I reviewed and redacted this query for local evaluation storage."))ShowJson(output,await api("expansion/evaluations",HttpMethod.Post,new{title=title.Text,query=query.Text,kind=kind.SelectedItem?.ToString(),expect_error=expectError.IsChecked==true,expected_sources=Lines(sources.Text),confirmed=true}));});
+        var suiteStatus = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
+        AutomationProperties.SetLiveSetting(suiteStatus, AutomationLiveSetting.Polite);
+        void Announce(string message)
+        {
+            suiteStatus.Text = message;
+            UIElementAutomationPeer.CreatePeerForElement(suiteStatus)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
+        Button(p,"Run saved evaluation suite",async()=>{
+            Announce("Running saved evaluations.");
+            try
+            {
+                var report = await api("expansion/evaluations/run-suite",HttpMethod.Post,null);
+                ShowJson(output,report);
+                Announce($"Evaluation suite finished. {Text(report,"passed")} passed, {Text(report,"failed")} failed.");
+            }
+            catch (Exception error)
+            {
+                Announce($"Evaluation suite failed. {error.Message}");
+                throw;
+            }
+        });
+        p.Children.Add(suiteStatus);
         Button(p,"Run read-only case",async()=>ShowJson(output,await api("expansion/evaluations/"+Uri.EscapeDataString(id.Text)+"/run",HttpMethod.Post,null)));
         Button(p,"Export displayed results",()=>{SaveText("wednesday-evaluation.json",output.Text);return Task.CompletedTask;});
         Button(p,"Delete case and results",async()=>{if(Confirm("Delete this case and its recorded runs?"))ShowJson(output,await api("expansion/evaluations/"+Uri.EscapeDataString(id.Text),HttpMethod.Delete,null));});return p;

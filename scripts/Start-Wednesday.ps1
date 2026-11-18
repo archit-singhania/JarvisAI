@@ -21,7 +21,7 @@ function Initialize-WednesdayCore {
   if(-not $taskNeedsSetup){$taskNeedsSetup=(Get-Content -Raw -LiteralPath $taskMarker).Trim() -ne $taskRequirementsHash}
   if(-not $taskNeedsSetup){
     try {
-      Invoke-WednesdayCoreCommand -Python $taskInterpreter -Arguments @('-c','import fastapi, uvicorn, httpx, pydantic_settings, multipart, pypdf, tzdata') -FailureMessage 'Core dependencies need repair'
+      Invoke-WednesdayCoreCommand -Python $taskInterpreter -Arguments @('-c','import fastapi, uvicorn, httpx, pydantic_settings, multipart, pypdf, tzdata, dateutil, cryptography') -FailureMessage 'Core dependencies need repair'
     } catch {$taskNeedsSetup=$true}
   }
   if($taskNeedsSetup){

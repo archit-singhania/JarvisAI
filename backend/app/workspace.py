@@ -120,9 +120,13 @@ class Workspace:
             return db.execute('DELETE FROM records WHERE id=? AND owner=?', (identity, owner)).rowcount > 0
 
     def retrieve(self, owner, query, limit=3, conversation_id=None):
+        return self.retrieve_records(self.records(owner), query, limit, conversation_id)
+
+    @staticmethod
+    def retrieve_records(records, query, limit=3, conversation_id=None, *, chunk_tokens=None):
         words = set(re.findall(r'\w+', query.lower())) - {'the', 'is', 'a', 'of', 'and', 'to', 'what', 'my'}
         ranked = []
-        for record in self.records(owner):
+        for record in records:
             if record['kind'] not in ('document', 'memory'):
                 continue
             if record['kind'] == 'memory':
@@ -131,7 +135,14 @@ class Workspace:
                     continue
             for offset in range(0, len(record['content']), 1200):
                 chunk = record['content'][offset:offset+1500]
-                matched = words.intersection(re.findall(r'\w+', chunk.lower()))
+                if chunk_tokens is None:
+                    tokens = re.findall(r'\w+', chunk.lower())
+                else:
+                    key = (record['id'], offset)
+                    if key not in chunk_tokens:
+                        chunk_tokens[key] = set(re.findall(r'\w+', chunk.lower()))
+                    tokens = chunk_tokens[key]
+                matched = words.intersection(tokens)
                 if matched:
                     ranked.append((len(matched), {'id': record['id'], 'title': record['title'], 'content': chunk, 'offset': offset, 'kind': record['kind'], **({'memory_version': record['metadata']['version'], 'memory_origin': record['metadata']['origin'], 'scope': record['metadata']['scope']} if record['kind'] == 'memory' else {})}))
         return [r[1] for r in sorted(ranked, key=lambda x: x[0], reverse=True)[:limit]]

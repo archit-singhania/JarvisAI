@@ -3,7 +3,6 @@ import ast
 import asyncio
 import base64
 import importlib.util
-import io
 import json
 import logging
 import os
@@ -280,15 +279,16 @@ async def upload_document(file: UploadFile,identity=Depends(owner)):
     filename = Path(file.filename or 'document').name
     try:
         if filename.lower().endswith('.pdf'):
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(raw))
-            text = '\n\n'.join(p.extract_text() or '' for p in reader.pages)
+            from app.extract_pdf import extract_document
+            text = await asyncio.to_thread(extract_document, raw, upload=True)
         elif Path(filename).suffix.lower() in ('.txt','.md','.csv','.json','.py','.js','.ts','.cs','.dart'):
             text = raw.decode('utf-8-sig')
         else:
             raise HTTPException(415,'Upload PDF, UTF-8 text, Markdown, CSV, JSON, or a supported source file')
     except HTTPException:
         raise
+    except TimeoutError:
+        raise HTTPException(503,'PDF workers are busy. Try again shortly.') from None
     except Exception:
         raise HTTPException(422,'Document could not be read; scanned PDFs require OCR before import')
     if not text.strip():

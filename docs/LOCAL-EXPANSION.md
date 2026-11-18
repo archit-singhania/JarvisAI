@@ -8,25 +8,27 @@ Open **Local workspace** in the browser or **Continuity studio → Local edits**
 
 Disconnect after opening the application, save an operation, reconnect and synchronize. Expect one resulting revision even if the response was lost and the operation is retried. Browser reconnect attempts safe synchronization automatically. WPF synchronization is explicit. Pending, syncing, failed, completed and conflicted browser states are visible. A conflict shows your submitted text and the saved version; explicitly choose the revision to overwrite. In WPF inspect both versions in the result, then create a new operation with the current revision. Completed entries can be removed locally.
 
-Notes enter local knowledge retrieval. Drafts are saved drafts, not sent messages. Memory corrections preserve original provenance and revision history; use the existing memory inspector to obtain the ID/version. Reminders require an explicit UTC offset. Commands, host actions and external writes are rejected by the queue contract. Workspace identity is checked again before synchronization. The browser must already be loaded to work during a service outage; an offline-installable service-worker shell is not included. Desktop reopening while disconnected still requires identity-loading improvements.
+Notes enter local knowledge retrieval. Drafts are saved drafts, not sent messages. Memory corrections preserve original provenance and revision history; use the existing memory inspector to obtain the ID/version. Reminders require an explicit UTC offset. Commands, host actions and external writes are rejected by the queue contract. Workspace identity is checked again before synchronization. After one connected load, a service worker caches only public application files (never API responses). Offline reload restores the last workspace and pending edits. WPF similarly restores its last loaded identity locally; synchronization still requires a matching authenticated owner. Clearing browser/application storage removes these local drafts and queue entries.
 
 ## Calendar planning
 
 Import an `.ics` file, inspect events, enter a working-window start/end with UTC offsets and a duration, and request a proposal. Inspect the exact proposed interval before approving a local event or a Google write. Existing events block time; calendar changes invalidate unapplied proposals. Retries use stable event IDs. Export and reopen the `.ics` file to inspect real saved events.
 
-Calendar-file import supports UTC and IANA TZID timed events, folded lines and escaped summaries. Ambiguous/nonexistent daylight-saving times are rejected; convert them to UTC explicitly. Recurring and all-day **file** imports currently require conversion/expansion. Export folds UTF-8 lines. Working windows are at most seven days and blocks are 5–480 minutes. Multi-task priority scheduling and recurring working-hour presets remain follow-up work.
+Calendar-file import supports UTC and IANA TZID timed events, folded lines and escaped summaries. Ambiguous/nonexistent daylight-saving times are rejected; convert them to UTC explicitly. All-day date values use the workspace timezone and round-trip as dates. Recurring imports preserve rules, extra dates, exclusions, moves and cancellations. Open-ended rules expand on demand up to 9,000 occurrences per series. The planner rejects requests outside verified coverage. Export folds UTF-8 lines. Working windows are at most seven days and blocks are 5–480 minutes. Multi-task priority scheduling and recurring working-hour presets remain follow-up work.
 
 ### Optional Google adapter
 
-Set these **process environment variables** on the local backend host, outside Git:
+For interactive sign-in, configure a Google OAuth web application with the Calendar API enabled, then set these process environment variables on the Wednesday host:
 
-- `WEDNESDAY_GOOGLE_OWNER`: the exact authorized workspace owner ID.
-- `WEDNESDAY_GOOGLE_ACCOUNT_LABEL`: a recognizable account label.
-- Either `WEDNESDAY_GOOGLE_ACCESS_TOKEN`, or all of `WEDNESDAY_GOOGLE_REFRESH_TOKEN`, `WEDNESDAY_GOOGLE_CLIENT_ID`, `WEDNESDAY_GOOGLE_CLIENT_SECRET`.
+- `WEDNESDAY_GOOGLE_CLIENT_ID` and `WEDNESDAY_GOOGLE_CLIENT_SECRET` from the OAuth application.
+- `WEDNESDAY_GOOGLE_REDIRECT_URI` to the exact registered callback, for example `http://localhost:8000/api/expansion/calendar/google/oauth/callback`.
+- `WEDNESDAY_GOOGLE_CREDENTIAL_KEY` to a persistent Fernet key. Generate it with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and keep it outside Git and database backups.
 
-Provision OAuth authorization outside this application; the app does not currently provide an OAuth consent/sign-in screen. Tokens never enter exported records or browser state. Select a calendar from the configured account, then synchronize before proposing time blocks. The adapter persists checkpoints, handles pagination and HTTP 410 full-resync recovery, and imports deleted events. Sync is bounded to 50 pages of 1000 events. Live-account behavior remains unverified.
+Choose **Sign in with Google** in either client, finish consent in the browser, then select a calendar and synchronize. Keep the credential key available across restarts. Sign-in stores an encrypted workspace-bound refresh token. Live-account behavior remains unverified.
 
-Approved writes re-synchronize first, compare the reviewed calendar snapshot, use a stable Google event ID and recover uncertain responses. No attendees are added and `sendUpdates=none` is sent. Calendar changes after the last read remain an external-service race; the adapter is not a distributed scheduling lock. Disconnect stops subsequent synchronization and removes imported Google events from local planning. It does not delete external events or revoke the separately provisioned OAuth grant.
+For host-provisioned access, set `WEDNESDAY_GOOGLE_OWNER` to the authorized workspace ID and provide either `WEDNESDAY_GOOGLE_ACCESS_TOKEN` or `WEDNESDAY_GOOGLE_REFRESH_TOKEN` with the OAuth client ID and secret. Sync persists checkpoints, handles pagination and HTTP 410 recovery, and processes remote deletions. It is bounded to 50 pages of 1,000 events.
+
+Approved writes re-synchronize first, compare the reviewed calendar snapshot, use a stable Google event ID and recover uncertain responses. No attendees are added and `sendUpdates=none` is sent. Calendar changes after the last read remain an external-service race; the adapter is not a distributed scheduling lock. Disconnect clears the browser sign-in grant, pending sign-in attempts and imported Google events from the workspace. Host-provisioned credentials and Google-side grants are managed separately.
 
 Implementation references: [Google synchronization](https://developers.google.com/workspace/calendar/api/guides/sync) and [event creation](https://developers.google.com/workspace/calendar/api/guides/create-events).
 
@@ -49,3 +51,17 @@ Reports include case hashes, formula/configuration versions, source hashes, elap
 The final backend regression run passed 52 tests. WPF Debug build passed with zero warnings/errors. An Edge journey verified offline save/reconnect/reload, local calendar approval, evaluation execution and a 390px layout without horizontal overflow or JavaScript errors. Google tests use mocked responses, not a live account. Existing test tooling emits a Starlette/httpx deprecation warning.
 
 Still required: interactive WPF journeys, updated packaged installation, full keyboard/screen-reader and light/dark visual review, physical-device checks, long-running performance/recovery profiling and live Google consent/token tests. No deployment, paid subscription, signing or automatic update execution was performed.
+
+## November 18 acceptance update
+
+Offline Edge reload/reconnect acceptance passed against the latest code. All 52 backend regressions passed again. WPF Debug build passed with zero warnings/errors. Actual native controls passed queue persistence, duplicate prevention, calendar approval, evaluation and folder-status checks. The same checks passed in the self-contained Windows executable. These programmatic native checks do not certify visual/screen-reader behavior. All 46 bundled Python, JavaScript, CSS and HTML source files matched repository hashes.
+
+Package: `release/Wednesday-win-x64-20261118-044338.zip`. No live Google account was used. Remaining release checks include visual/native accessibility, physical devices, load/performance profiling and live-provider consent/token behavior. Remaining implementation gaps include coverage beyond the recurrence cap, multi-task planning, OS-level filesystem isolation for the PDF parser, and additional evaluation adapters.
+
+## Current workspace verification
+
+The browser and Windows clients support Google sign-in. Mocked checks cover callback replay, cancellation, partial grants, encrypted storage and revocation. A live Google account and registered OAuth client are still required for provider acceptance.
+
+PDF uploads and watched folders use a shared subprocess with two parser slots per backend process, a 384 MiB memory limit and a 10-second execution timeout. Python-level filesystem and network restrictions are verified. OS-level filesystem isolation remains open.
+
+Edge verified phone-width keyboard navigation, evaluation focus and connection status semantics. Windows acceptance verified evaluation completion text and its live-region setting. Actual screen-reader speech remains unverified. Local HTTP measurements for 20 distinct queries across four concurrent workspaces reached a 706 ms median, with an 859 ms maximum. The Windows ZIP above is historical and predates these changes.

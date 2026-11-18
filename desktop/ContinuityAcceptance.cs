@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Automation;
 
 namespace JarvisAI;
 public sealed partial class ContinuityWindow
@@ -21,6 +22,39 @@ public sealed partial class ContinuityWindow
         if(!button.IsEnabled)throw new TimeoutException("Native action did not finish: "+title);
     }
     private static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
+    public async Task<object> VerifyExpansionAsync()
+    {
+        if(Environment.GetEnvironmentVariable("WEDNESDAY_ACCEPTANCE_MODE")!="1"||http.BaseAddress?.IsLoopback!=true)throw new InvalidOperationException("Use an isolated loopback fixture.");
+        var edits=AcceptancePanel("Local edits");
+        await AcceptanceClick(edits,"Load identity and saved queue");
+        AcceptanceField(edits,"Title").Text="Native offline fixture";
+        AcceptanceField(edits,"Content").Text="native-violet-source";
+        await AcceptanceClick(edits,"Save local operation");
+        Require(AcceptanceField(edits,"Local queue and results").Text.Contains("pending"),"Local queue did not persist");
+        await AcceptanceClick(edits,"Synchronize safe local edits");
+        Require(AcceptanceField(edits,"Local queue and results").Text.Contains("completed"),"Local synchronization failed: "+status.Text);
+        await AcceptanceClick(edits,"Synchronize safe local edits");
+        var saved=await api("expansion/offline",null,null);Require(saved.GetProperty("records").GetArrayLength()==1,"Duplicate local write");
+        var calendar=AcceptancePanel("Calendar");AcceptanceField(calendar,"Block title").Text="Native reviewed block";
+        await AcceptanceClick(calendar,"Propose free block");await AcceptanceClick(calendar,"Approve displayed proposal");
+        var events=await api("expansion/calendar",null,null);Require(events.GetProperty("events").GetArrayLength()==1,"Calendar approval failed: "+status.Text);
+        var sources=await api("search?q=native-violet-source",null,null);var source=Text(sources.GetProperty("sources")[0],"id");
+        var evaluations=AcceptancePanel("Evaluations");AcceptanceField(evaluations,"Case title").Text="Native retrieval fixture";AcceptanceField(evaluations,"Redacted query").Text="native-violet-source";AcceptanceField(evaluations,"Expected owned source IDs, one per line").Text=source;
+        await AcceptanceClick(evaluations,"Save reviewed case");var result=JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text).RootElement;
+        AcceptanceField(evaluations,"Case ID to run/delete").Text=Text(result,"id");await AcceptanceClick(evaluations,"Run read-only case");
+        var report=JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text).RootElement;Require(report.GetProperty("passed").GetBoolean(),"Native evaluation failed");
+        await AcceptanceClick(evaluations,"Run saved evaluation suite");
+        using var suite = JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text);
+        Require(suite.RootElement.GetProperty("passed").GetInt32()==1 &&
+                suite.RootElement.GetProperty("failed").GetInt32()==0,"Native evaluation suite failed");
+        var announcement = evaluations.Children.OfType<TextBlock>().SingleOrDefault(
+            control => AutomationProperties.GetLiveSetting(control) == AutomationLiveSetting.Polite);
+        Require(announcement?.Text == "Evaluation suite finished. 1 passed, 0 failed.",
+                "Evaluation suite completion announcement missing");
+        await AcceptanceClick(AcceptancePanel("Watched folders"),"Refresh scan status");
+        Require(AcceptanceField(AcceptancePanel("Watched folders"),"Index status and per-file failures").Text.Contains("folders"),"Native folder status failed");
+        return new{passed=true,queue=true,duplicatePrevention=true,calendar=true,evaluation=true,folderStatus=true,visualInspection=false};
+    }
     public async Task<object> VerifyContinuityAsync()
     {
         if(Environment.GetEnvironmentVariable("WEDNESDAY_ACCEPTANCE_MODE")!="1"||http.BaseAddress?.IsLoopback!=true)throw new InvalidOperationException("Native functional acceptance requires an isolated loopback fixture.");

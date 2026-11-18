@@ -2,6 +2,7 @@
 import hashlib
 import json
 import time
+from statistics import median
 import ast
 import asyncio
 from uuid import uuid4
@@ -26,15 +27,57 @@ class Evaluations:
         with self.store.db() as db: db.execute('INSERT INTO evaluation_cases VALUES(?,?,?,?)',(identity,owner,json.dumps(value),timestamp()))
         return {'id':identity}
 
+    def run_suite(self, owner):
+        with self.store.db() as db:
+            cases = db.execute(
+                'SELECT id,value FROM evaluation_cases WHERE owner=? ORDER BY created_at DESC,id LIMIT 101',
+                (owner,),
+            ).fetchall()
+        if not cases:
+            raise ValueError('Save at least one evaluation case first')
+        if len(cases) > 100:
+            raise ValueError('Suite runs support up to 100 saved cases')
+        needs_sources = any(json.loads(case['value']).get('kind','retrieval') == 'retrieval' for case in cases)
+        records = self.store.records(owner) if needs_sources else []
+        retrieval_cache = {}
+        chunk_tokens = {}
+        results = [self._run_case(owner, case, records, retrieval_cache, chunk_tokens) for case in cases]
+        latencies = sorted(result['latency_ms'] for result in results)
+        failures = [result['case_id'] for result in results if not result['passed']]
+        return {
+            'runs': results,
+            'passed': len(results) - len(failures),
+            'failed': len(failures),
+            'failed_case_ids': failures,
+            'median_ms': median(latencies),
+            'p95_ms': latencies[(95 * len(latencies) + 99) // 100 - 1],
+            'reused_retrievals': sum(result['retrieval_reused'] for result in results),
+        }
+
     def run(self, owner, identity):
         with self.store.db() as db: row=db.execute('SELECT * FROM evaluation_cases WHERE id=? AND owner=?',(identity,owner)).fetchone()
         if not row: raise KeyError(identity)
+        return self._run_case(owner, row)
+
+    def _run_case(self, owner, row, records=None, retrieval_cache=None, chunk_tokens=None):
+        identity = row['id']
         case=json.loads(row['value']); started=time.perf_counter()
         kind=case.get('kind','retrieval')
-        sources=self.store.retrieve(owner,case['query']) if kind=='retrieval' else []
+        sources = []
+        reused = False
+        if kind == 'retrieval':
+            query = case['query']
+            if retrieval_cache is None:
+                sources = self.store.retrieve(owner, query)
+            else:
+                reused = query in retrieval_cache
+                if not reused:
+                    retrieval_cache[query] = self.store.retrieve_records(records, query, chunk_tokens=chunk_tokens)
+                sources = retrieval_cache[query]
         found={r['id'] for r in sources}
         expected=set(case['expected_sources'])
         result={'case_id':identity,'formula_version':'local-retrieval-v1','case_sha256':hashlib.sha256(row['value'].encode()).hexdigest(),'provider':'local','model':None,'latency_ms':round((time.perf_counter()-started)*1000,3),'passed':expected.issubset(found),'missing_sources':sorted(expected-found),'sources':[{'id':r['id'],'sha256':hashlib.sha256(json.dumps(r,sort_keys=True).encode()).hexdigest()} for r in sources],'coverage':'Local retrieval source availability only; tool correctness, model quality and cancellation are not measured.'}
+        result['retrieval_reused'] = reused
         if kind=='python_diagnostics':
             diagnostic=None
             try:ast.parse(case['query'])

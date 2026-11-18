@@ -27,3 +27,23 @@ body[data-density="focused"] .welcome .suggestions { display:none; }
 @media(max-width:650px){.continuity-comparison{grid-template-columns:1fr}}
 
 .memory-inspector{width:min(740px,calc(100vw - 32px));max-height:85vh;overflow:auto}.memory-inspector .card{margin-block:12px;overflow-wrap:anywhere}.memory-inspector>button{margin:12px 8px 0 0}
+
+.mobile-navigation { display: none; }
+@media (max-width: 700px) {
+  .mobile-navigation {
+    display: grid;
+    gap: .25rem;
+    padding: .4rem .75rem;
+    flex-shrink: 0;
+  }
+  .mobile-navigation select { width: 100%; }
+}
+
+.mobile-connection-status { display: none; }
+@media (max-width: 700px) {
+  .mobile-connection-status {
+    display: block;
+    margin: 0 .75rem .35rem;
+    color: var(--muted);
+  }
+}

@@ -7,18 +7,29 @@ const assert=require('node:assert/strict');
   const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(process.env.WEDNESDAY_URL||'http://127.0.0.1:8799/ui/');
-  await page.getByText('Workspace connected',{exact:true}).waitFor();
+  await page.locator('#connection-label').filter({hasText:'Workspace connected'}).waitFor();
+  await page.evaluate(()=>navigator.serviceWorker.ready);
+  await page.waitForFunction(()=>navigator.serviceWorker.controller!==null);
+  await page.route('**/api/expansion/folders', route => route.fulfill({json:{folders:[{
+    id:'fixture', root:'Approved fixture', status:'ready', files:[
+      {path:'pending.pdf',error:'PDF workers are busy; extraction will retry on the next scan'},
+    ],
+  }]}}));
   await page.getByRole('button',{name:'Local workspace'}).click();
+  await page.getByText('1 files need attention',{exact:true}).click();
+  await page.getByText('pending.pdf — PDF workers are busy; extraction will retry on the next scan',{exact:true}).waitFor();
   await page.getByRole('heading',{name:'Offline operations',exact:true}).waitFor();
   await context.setOffline(true);
   await page.locator('#field-title').fill('Offline acceptance');
   await page.locator('#field-content').fill('violet offline evidence');
   await page.getByRole('button',{name:'Save to local queue'}).click();
   await page.getByText('pending',{exact:true}).waitFor();
+  await page.reload();
+  await page.getByText('pending',{exact:true}).waitFor();
   await context.setOffline(false);
   await page.getByRole('button',{name:'Synchronize now'}).click();
   await page.getByText('completed · revision 1',{exact:true}).waitFor();
-  await page.reload();await page.getByText('Workspace connected',{exact:true}).waitFor();
+  await page.reload();await page.locator('#connection-label').filter({hasText:'Workspace connected'}).waitFor();
   await page.getByRole('button',{name:'Local workspace'}).click();
   await page.getByText('completed · revision 1',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Propose a time block'}).click();
@@ -34,9 +45,31 @@ const assert=require('node:assert/strict');
   await page.getByRole('dialog').getByRole('button',{name:'Save',exact:true}).click();
   await page.getByRole('button',{name:'Run read-only evaluation'}).click();
   await page.getByRole('heading',{name:'Evaluation passed'}).waitFor();
+  const runSuite = page.getByRole('button',{name:'Run saved evaluation suite'});
+  await runSuite.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading',{name:'1 passed · 0 failed'}).waitFor();
+  const dialog = page.getByRole('dialog',{name:'Evaluation suite results'});
+  assert(await dialog.evaluate(node => document.activeElement.id === 'suite-results-heading'));
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button',{name:'Download suite report'}).click(),
+  ]);
+  const summary = JSON.parse(require('node:fs').readFileSync(await download.path(), 'utf8'));
+  assert.equal(summary.runs.length,1);
+  assert(summary.p95_ms >= summary.median_ms);
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state:'hidden'});
+  assert(await runSuite.evaluate(node => document.activeElement === node));
   await page.setViewportSize({width:390,height:844});
+  const mobileStatus=page.locator('#mobile-connection-status');
+  await mobileStatus.waitFor({state:'visible'});
+  assert.match(await mobileStatus.ariaSnapshot(), /status/);
+  assert.match(await mobileStatus.textContent(), /Workspace connected/);
+  const section=page.getByRole('combobox',{name:'Workspace section'});
+  assert.equal(await section.inputValue(),'expansion');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Phone horizontal overflow');
   assert.deepEqual(errors,[]);
-  console.log('PASS offline/reconnect/reload, calendar approval, evaluation, phone overflow, JavaScript errors');
+  console.log('PASS offline shell reload/reconnect/persistence, calendar approval, evaluation, phone overflow, JavaScript errors');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

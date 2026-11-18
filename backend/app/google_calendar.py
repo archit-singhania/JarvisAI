@@ -1,12 +1,21 @@
 """Optional owner-bound Google adapter. Secrets remain in host environment."""
 import json
 import os
+import hashlib
+import secrets
+import time
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 import httpx
 from fastapi import HTTPException
+from cryptography.fernet import Fernet, InvalidToken
 from app.planning import Planning
+
+GOOGLE_CALENDAR_SCOPES = (
+    'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    'https://www.googleapis.com/auth/calendar.events',
+)
 
 
 class GoogleCalendar:
@@ -16,18 +25,114 @@ class GoogleCalendar:
         Planning(store)
         with store.db() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS google_connections(owner TEXT PRIMARY KEY,calendar TEXT NOT NULL,sync_token TEXT,revision INTEGER NOT NULL DEFAULT 1);
-            CREATE TABLE IF NOT EXISTS google_writes(owner TEXT NOT NULL,proposal TEXT NOT NULL,calendar TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(owner,proposal));''')
+            CREATE TABLE IF NOT EXISTS google_writes(owner TEXT NOT NULL,proposal TEXT NOT NULL,calendar TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(owner,proposal));
+            CREATE TABLE IF NOT EXISTS google_oauth_states(state_hash TEXT PRIMARY KEY,owner TEXT NOT NULL UNIQUE,expires REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS google_oauth_credentials(owner TEXT PRIMARY KEY,refresh_token TEXT NOT NULL);''')
+
+    @staticmethod
+    def oauth_settings():
+        keys = ('CLIENT_ID', 'CLIENT_SECRET', 'REDIRECT_URI')
+        return [os.environ.get('WEDNESDAY_GOOGLE_'+key) for key in keys]
+
+    def begin_oauth(self, owner):
+        client_id, secret, redirect = self.oauth_settings()
+        if not all((client_id, secret, redirect)):
+            raise HTTPException(409, 'Configure the Google OAuth application first')
+        self.credential_cipher()
+        state = secrets.token_urlsafe(32)
+        with self.store.db() as db:
+            db.execute('DELETE FROM google_oauth_states WHERE owner=? OR ABS(expires)<?', (owner,time.time()))
+            db.execute('INSERT INTO google_oauth_states VALUES(?,?,?)',
+                       (hashlib.sha256(state.encode()).hexdigest(),owner,time.time()+600))
+        params = dict(client_id=client_id,redirect_uri=redirect,response_type='code',state=state,
+                      access_type='offline',prompt='consent select_account',
+                      scope=' '.join(GOOGLE_CALENDAR_SCOPES))
+        return {'url':'https://accounts.google.com/o/oauth2/v2/auth?'+urlencode(params)}
+
+    def finish_oauth(self, state, code):
+        client_id, secret, redirect = self.oauth_settings()
+        if not all((client_id, secret, redirect)):
+            raise HTTPException(409, 'Google OAuth configuration unavailable')
+        cipher = self.credential_cipher()
+        state_hash = hashlib.sha256(state.encode()).hexdigest()
+        with self.store.db() as db:
+            # A negative expiry marks a claimed state while keeping it cancellable.
+            row = db.execute('UPDATE google_oauth_states SET expires=-expires WHERE state_hash=? AND expires>=? RETURNING owner',
+                             (state_hash,time.time())).fetchone()
+        if not row:
+            raise HTTPException(400, 'Google sign-in expired or was already used')
+        if not code:
+            raise HTTPException(400, 'Google sign-in was cancelled')
+        try:
+            post = self.client.post if self.client else httpx.post
+            response = post('https://oauth2.googleapis.com/token',timeout=20,
+                            data=dict(code=code,client_id=client_id,client_secret=secret,
+                                      redirect_uri=redirect,grant_type='authorization_code'))
+            grant = response.json() if response.is_success else {}
+            refresh = grant.get('refresh_token') if isinstance(grant, dict) else None
+        except (ValueError,httpx.HTTPError):
+            refresh = None
+        if not isinstance(refresh, str) or not refresh:
+            raise HTTPException(502, 'Google did not grant offline calendar access')
+        granted_scopes = grant.get('scope')
+        if granted_scopes is not None and (
+            not isinstance(granted_scopes, str)
+            or not set(GOOGLE_CALENDAR_SCOPES).issubset(granted_scopes.split())
+        ):
+            raise HTTPException(403, 'Google granted only part of the requested calendar access. Start sign-in again to grant both permissions.')
+        owner = row['owner']
+        with self.store.db() as db:
+            active = db.execute('DELETE FROM google_oauth_states WHERE state_hash=? AND owner=? AND expires<=? RETURNING owner',
+                                (state_hash,owner,-time.time())).fetchone()
+            if not active:
+                raise HTTPException(409, 'Google sign-in was cancelled or replaced')
+            encrypted = 'fernet:' + cipher.encrypt((owner + ':' + refresh).encode()).decode()
+            db.execute('INSERT OR REPLACE INTO google_oauth_credentials VALUES(?,?)',(owner,encrypted))
+            db.execute('DELETE FROM google_connections WHERE owner=?',(owner,))
+            db.execute("DELETE FROM calendar_events WHERE owner=? AND id LIKE 'google:%'",(owner,))
+        return owner
+
+    @staticmethod
+    def credential_cipher():
+        try:
+            return Fernet(os.environ.get('WEDNESDAY_GOOGLE_CREDENTIAL_KEY','').encode())
+        except ValueError:
+            raise HTTPException(409, 'Configure the Google Calendar credential encryption key') from None
+
+    def refresh_token(self, owner):
+        with self.store.db() as db:
+            row = db.execute('SELECT refresh_token FROM google_oauth_credentials WHERE owner=?',(owner,)).fetchone()
+        if row:
+            value = row['refresh_token']
+            cipher = self.credential_cipher()
+            if not value.startswith('fernet:'):
+                with self.store.db() as db:
+                    encrypted = 'fernet:' + cipher.encrypt((owner + ':' + value).encode()).decode()
+                    db.execute('UPDATE google_oauth_credentials SET refresh_token=? WHERE owner=? AND refresh_token=?',
+                               (encrypted, owner, value))
+                return value
+            try:
+                bound_owner, token = cipher.decrypt(value[7:].encode()).decode().split(':',1)
+                if bound_owner != owner:
+                    raise InvalidToken
+                return token
+            except (InvalidToken, ValueError):
+                raise HTTPException(409, 'Google credentials need reconnection') from None
+        if os.environ.get('WEDNESDAY_GOOGLE_OWNER') == owner:
+            return os.environ.get('WEDNESDAY_GOOGLE_REFRESH_TOKEN')
 
     def configured(self, owner):
-        return os.environ.get('WEDNESDAY_GOOGLE_OWNER')==owner and bool(os.environ.get('WEDNESDAY_GOOGLE_ACCESS_TOKEN') or all(os.environ.get(k) for k in ('WEDNESDAY_GOOGLE_REFRESH_TOKEN','WEDNESDAY_GOOGLE_CLIENT_ID','WEDNESDAY_GOOGLE_CLIENT_SECRET')))
+        return bool((os.environ.get('WEDNESDAY_GOOGLE_OWNER')==owner and os.environ.get('WEDNESDAY_GOOGLE_ACCESS_TOKEN'))
+                    or (all(self.oauth_settings()[:2]) and self.refresh_token(owner)))
 
     def request(self, owner, method, path, **kwargs):
         if not self.configured(owner): raise HTTPException(409,'Google Calendar is not configured for this workspace')
-        token=os.environ.get('WEDNESDAY_GOOGLE_ACCESS_TOKEN')
+        refresh = self.refresh_token(owner)
+        token = os.environ.get('WEDNESDAY_GOOGLE_ACCESS_TOKEN') if not refresh and os.environ.get('WEDNESDAY_GOOGLE_OWNER')==owner else None
         def perform(client):
             nonlocal token
             if not token:
-                response=client.post('https://oauth2.googleapis.com/token',data={'grant_type':'refresh_token','refresh_token':os.environ['WEDNESDAY_GOOGLE_REFRESH_TOKEN'],'client_id':os.environ['WEDNESDAY_GOOGLE_CLIENT_ID'],'client_secret':os.environ['WEDNESDAY_GOOGLE_CLIENT_SECRET']})
+                response=client.post('https://oauth2.googleapis.com/token',data={'grant_type':'refresh_token','refresh_token':refresh,'client_id':os.environ['WEDNESDAY_GOOGLE_CLIENT_ID'],'client_secret':os.environ['WEDNESDAY_GOOGLE_CLIENT_SECRET']})
                 if response.status_code!=200: raise HTTPException(409,'Google credentials need reconnection')
                 token=response.json()['access_token']
             response=client.request(method,'https://www.googleapis.com/calendar/v3/'+path,headers={'Authorization':'Bearer '+token},**kwargs)
@@ -40,13 +145,36 @@ class GoogleCalendar:
 
     def status(self, owner):
         with self.store.db() as db: row=db.execute('SELECT calendar,revision FROM google_connections WHERE owner=?',(owner,)).fetchone()
-        return {'available':self.configured(owner),'connection':dict(row) if row else None,'account_label':os.environ.get('WEDNESDAY_GOOGLE_ACCOUNT_LABEL','Configured Google account') if self.configured(owner) else None}
+        try:
+            available = self.configured(owner)
+        except HTTPException as error:
+            if error.status_code != 409:
+                raise
+            available = False
+        return {'available':available,'connection':dict(row) if row else None,'account_label':os.environ.get('WEDNESDAY_GOOGLE_ACCOUNT_LABEL','Configured Google account') if available else None}
 
     def calendars(self, owner):
-        response=self.request(owner,'GET','users/me/calendarList',params={'maxResults':250})
-        if response.status_code!=200: raise HTTPException(502,'Calendar list unavailable')
-        data=response.json()
-        return {'calendars':[{'id':r['id'],'title':r.get('summary','Calendar'),'role':r.get('accessRole','reader')} for r in data.get('items',[])],'partial':bool(data.get('nextPageToken'))}
+        calendars = {}
+        params = {'maxResults':250}
+        seen_tokens = set()
+        for _ in range(50):
+            response = self.request(owner,'GET','users/me/calendarList',params=params)
+            if response.status_code != 200:
+                raise HTTPException(502,'Calendar list unavailable')
+            data = response.json()
+            for item in data.get('items', []):
+                calendars[item['id']] = {
+                    'id':item['id'], 'title':item.get('summary','Calendar'),
+                    'role':item.get('accessRole','reader'),
+                }
+            token = data.get('nextPageToken')
+            if not token:
+                return {'calendars':list(calendars.values()),'partial':False}
+            if token in seen_tokens:
+                raise HTTPException(502,'Google returned a repeated calendar page')
+            seen_tokens.add(token)
+            params['pageToken'] = token
+        raise HTTPException(502,'Google calendar list exceeds the supported page limit')
 
     def connect(self, owner, calendar):
         if calendar not in {r['id'] for r in self.calendars(owner)['calendars']}: raise HTTPException(422,'Choose an accessible calendar from this account')
@@ -57,8 +185,24 @@ class GoogleCalendar:
 
     def disconnect(self, owner):
         with self.store.db() as db:
+            row = db.execute('DELETE FROM google_oauth_credentials WHERE owner=? RETURNING refresh_token',(owner,)).fetchone()
+            db.execute('DELETE FROM google_oauth_states WHERE owner=?',(owner,))
             db.execute('DELETE FROM google_connections WHERE owner=?',(owner,))
             db.execute("DELETE FROM calendar_events WHERE owner=? AND id LIKE 'google:%'",(owner,))
+        if not row:
+            return {'disconnected':True,'google_revocation':'not_applicable'}
+        try:
+            token = row['refresh_token']
+            if token.startswith('fernet:'):
+                bound_owner, token = self.credential_cipher().decrypt(token[7:].encode()).decode().split(':',1)
+                if bound_owner != owner:
+                    raise InvalidToken
+            post = self.client.post if self.client else httpx.post
+            response = post('https://oauth2.googleapis.com/revoke', data={'token':token}, timeout=10)
+            revoked = response.is_success
+        except (HTTPException, InvalidToken, ValueError, httpx.HTTPError):
+            revoked = False
+        return {'disconnected':True,'google_revocation':'revoked' if revoked else 'unconfirmed'}
 
     def sync(self, owner):
         with self.store.db() as db: row=db.execute('SELECT * FROM google_connections WHERE owner=?',(owner,)).fetchone()
@@ -117,11 +261,12 @@ class GoogleCalendar:
         if receipt:
             recovered=self.request(owner,'GET',path+'/'+proposal)
             if recovered.status_code==404:recovered=None
-        if recovered is None and Planning.digest(Planning(self.store).events(owner))!=row['snapshot']:
-            raise HTTPException(409,'Calendar changed; inspect any pending Google event before reviewing a new proposal')
+        if recovered is None:
+            planner = Planning(self.store)
+            if not planner.validate_snapshot(owner, value['end'], row['snapshot']):
+                raise HTTPException(409,'Calendar changed; inspect any pending Google event before reviewing a new proposal')
         if not receipt:
             if row['applied']: raise HTTPException(409,'Already applied locally; create a fresh Google proposal')
-            if Planning.digest(Planning(self.store).events(owner))!=row['snapshot']: raise HTTPException(409,'Calendar changed; create and review a fresh proposal')
             with self.store.db() as db:db.execute("INSERT INTO google_writes VALUES(?,?,?,'pending')",(owner,proposal,connection['calendar']))
         payload={'id':proposal,'summary':value['title'],'start':{'dateTime':value['start']},'end':{'dateTime':value['end']},'extendedProperties':{'private':{'wednesdayProposal':proposal}}}
         response=recovered or self.request(owner,'POST',path,params={'sendUpdates':'none'},json=payload)

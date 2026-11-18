@@ -1,7 +1,8 @@
 """Bounded document indexing inside operator-approved roots only."""
 import fnmatch
 import hashlib
-import io
+from app.extract_pdf import extract_document
+import stat
 import json
 import os
 from pathlib import Path
@@ -66,9 +67,25 @@ class WatchFolders:
                 if path.is_symlink() or any(p.is_symlink() for p in path.parents) or not path.resolve().is_relative_to(root): continue
                 error=None; content=''; digest=''
                 try:
-                    if path.stat().st_size>4*1024*1024: raise ValueError('File exceeds 4 MiB')
-                    with path.open('rb') as source: data=source.read(4*1024*1024+1)
+                    before = path.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError('Only regular files can be indexed')
+                    if before.st_size > 4*1024*1024:
+                        raise ValueError('File exceeds 4 MiB')
+                    flags = os.O_RDONLY | getattr(os,'O_NOFOLLOW',0) | getattr(os,'O_NONBLOCK',0) | getattr(os,'O_BINARY',0)
+                    with os.fdopen(os.open(path,flags),'rb') as source:
+                        opened = os.fstat(source.fileno())
+                        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(before,opened):
+                            raise ValueError('File changed before opening')
+                        data = source.read(4*1024*1024+1)
+                        after = os.fstat(source.fileno())
+                    if (after.st_size,after.st_mtime_ns) != (opened.st_size,opened.st_mtime_ns):
+                        raise ValueError('File changed while being read')
+                    if (not os.path.samestat(after,path.stat(follow_symlinks=False))
+                            or path.is_symlink() or not path.resolve().is_relative_to(root)):
+                        raise ValueError('File moved or changed during scan')
                     bytes_read+=len(data)
+                    if bytes_read>32*1024*1024: raise OverflowError('Folder exceeds scan byte budget')
                     if len(data)>4*1024*1024: raise ValueError('File grew past budget')
                     digest=hashlib.sha256(data).hexdigest()
                     with self.store.db() as db:
@@ -76,12 +93,14 @@ class WatchFolders:
                     if prior and prior['hash']==digest and not prior['error']:
                         discovered[rel]=(digest,None,None,prior['record']); continue
                     if path.suffix.lower()=='.pdf':
-                        from pypdf import PdfReader
-                        reader=PdfReader(io.BytesIO(data))
-                        if len(reader.pages)>100: raise ValueError('PDF exceeds 100 pages')
-                        content='\n'.join(page.extract_text() or '' for page in reader.pages)
+                        content = extract_document(data)
                     else: content=data.decode('utf-8')
                     if len(content)>200000: raise ValueError('Extracted text exceeds 200000 characters')
+                except OverflowError:
+                    raise
+                except TimeoutError:
+                    error = 'PDF workers are busy; extraction will retry on the next scan'
+                    content = ''
                 except Exception as exc:
                     error=type(exc).__name__+': extraction unavailable'; content=''
                 identity=hashlib.sha256((folder['id']+'/'+rel).encode()).hexdigest()

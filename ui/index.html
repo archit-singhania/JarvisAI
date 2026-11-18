@@ -20,10 +20,23 @@
     <div class="history-heading"><span>YOUR CONVERSATIONS</span><button class="icon-button" id="search-open" aria-label="Search conversations">⌕</button></div>
     <input class="search" id="history-search" type="search" placeholder="Search your work…" aria-label="Search your conversations">
     <div id="history-list" class="history-list"></div>
-    <div class="rail-footer"><div class="engine-status"><i id="connection-dot"></i><span id="connection-label">Connecting</span></div><button class="nav" data-view="settings"><span>⚙</span> Preferences</button></div>
+    <div class="rail-footer"><div class="engine-status"><i id="connection-dot"></i><span id="connection-label" role="status">Connecting</span></div><button class="nav" data-view="settings"><span>⚙</span> Preferences</button></div>
   </aside>
   <main class="workspace" id="content">
     <header class="topbar"><div><span class="eyebrow">YOUR THINKING SPACE</span><h1 id="view-title">Assistant</h1></div><div class="header-actions"><span class="local-badge" id="mode-badge">Local first</span><button class="icon-button" id="header-new" aria-label="New conversation">＋</button><button class="icon-button" data-view="settings" aria-label="Preferences">⚙</button><button id="export" class="quiet">Export workspace ↗</button><button id="theme-toggle" class="icon-button" aria-label="Cycle appearance">◐</button></div></header>
+    <label class="mobile-navigation" for="mobile-view">Workspace section
+      <select id="mobile-view">
+        <option value="chat">Assistant</option>
+        <option value="knowledge">Knowledge</option>
+        <option value="memory">Memory</option>
+        <option value="reminders">Reminders</option>
+        <option value="tools">Tools &amp; workflows</option>
+        <option value="continuity">Continuity studio</option>
+        <option value="expansion">Local workspace</option>
+        <option value="settings">Preferences</option>
+      </select>
+    </label>
+    <p id="mobile-connection-status" class="mobile-connection-status" role="status">Connecting</p>
     <section id="chat-view" class="view chat-view">
       <div id="welcome" class="welcome"><div class="welcome-copy"><span class="eyebrow accent">INTELLIGENCE, WITH INTENTION</span><h2>A little clarity.<br>A lot of possibility.</h2><p>Talk through an idea, find the thread in your work, or build something worth keeping.</p><div class="suggestions"><button data-prompt="Help me break a complex project into a clear plan.">Make a plan <span>↗</span></button><button data-prompt="What can you help me learn from my uploaded documents?">Explore my knowledge <span>↗</span></button><button data-prompt="Help me reason through a coding problem.">Think through code <span>↗</span></button></div></div><div class="orb-stage" aria-hidden="true"><div class="orb"><div class="orb-core"></div></div><span class="orb-label" id="orb-label">Ready when you are</span></div></div>
       <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions"></div>

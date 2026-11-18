@@ -1,13 +1,16 @@
 """Owned interfaces for local continuity expansion."""
 import asyncio
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from urllib.parse import parse_qs, urlsplit
+from secrets import compare_digest
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from app.offline import Offline
 from app.planning import Planning
 from app.watchfolders import WatchFolders
 from app.evaluations import Evaluations
 from app.google_calendar import GoogleCalendar
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 
 class Strict(BaseModel):
@@ -77,7 +80,47 @@ def router(get_store, owner):
     def sync(body:Edit,identity=Depends(owner)): return call(lambda:Offline(get_store()).apply(identity,body.model_dump()))
 
     @routes.get('/calendar')
-    def calendar(identity=Depends(owner)): return {'events':Planning(get_store()).events(identity),'google':GoogleCalendar(get_store()).status(identity),'import_scope':'UTC/IANA timed events; recurrence and all-day events require conversion'}
+    def calendar(identity=Depends(owner)): return {'events':Planning(get_store()).events(identity),'google':GoogleCalendar(get_store()).status(identity),'checked_until':Planning(get_store()).checked_until(identity),'import_scope':'Timed, all-day and recurring events'}
+
+    @routes.post('/calendar/google/oauth/start')
+    def google_oauth_start(request: Request, response: Response, identity=Depends(owner)):
+        result = GoogleCalendar(get_store()).begin_oauth(identity)
+        if get_store().authenticate(request.cookies.get('wednesday_token')) == identity:
+            state = parse_qs(urlsplit(result['url']).query)['state'][0]
+            response.set_cookie('wednesday_google_return',state,max_age=600,httponly=True,
+                                secure=request.url.scheme=='https',samesite='lax',
+                                path='/api/expansion/calendar/google/oauth/callback')
+        return result
+
+    @routes.get('/calendar/google/oauth/callback', response_class=HTMLResponse)
+    def google_oauth_callback(request: Request, state: str, code: str | None = None):
+        outcome = 'connected'
+        try:
+            connected_owner = GoogleCalendar(get_store()).finish_oauth(state,code)
+        except HTTPException as error:
+            if error.detail == 'Google sign-in was cancelled':
+                outcome = 'cancelled'
+            elif error.status_code in (403,502):
+                outcome = 'incomplete'
+            else:
+                raise
+            connected_owner = None
+        try:
+            browser_owner = owner(request)
+        except HTTPException:
+            browser_owner = None
+        browser_state = request.cookies.get('wednesday_google_return','')
+        if (connected_owner and browser_owner == connected_owner) or (browser_state and compare_digest(browser_state.encode(),state.encode())):
+            response = RedirectResponse('/ui/?view=expansion&google='+outcome, status_code=303,
+                                    headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
+            response.delete_cookie('wednesday_google_return',path='/api/expansion/calendar/google/oauth/callback')
+            return response
+        heading = {
+            'connected':'Google Calendar connected',
+            'cancelled':'Google sign-in cancelled',
+            'incomplete':'Google Calendar sign-in could not finish',
+        }[outcome]
+        return HTMLResponse(f'<!doctype html><html lang="en"><title>{heading}</title><h1>{heading}</h1><p>Return to Wednesday to continue.</p></html>',headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
 
     @routes.get('/calendar/google')
     def google_calendars(identity=Depends(owner)): return GoogleCalendar(get_store()).calendars(identity)
@@ -90,7 +133,7 @@ def router(get_store, owner):
 
     @routes.delete('/calendar/google')
     def google_disconnect(identity=Depends(owner)):
-        GoogleCalendar(get_store()).disconnect(identity);return {'disconnected':True}
+        return GoogleCalendar(get_store()).disconnect(identity)
 
     @routes.post('/calendar/proposals/{proposal}/google')
     def google_write(proposal:str,body:Approval,identity=Depends(owner)): return GoogleCalendar(get_store()).approve(identity,proposal)
@@ -125,6 +168,10 @@ def router(get_store, owner):
 
     @routes.post('/evaluations')
     def save_case(body:Case,identity=Depends(owner)): return call(lambda:Evaluations(get_store()).save(identity,body.model_dump()))
+
+    @routes.post('/evaluations/run-suite')
+    def run_suite(identity=Depends(owner)):
+        return call(lambda: Evaluations(get_store()).run_suite(identity))
 
     @routes.post('/evaluations/{case_id}/run')
     def run_case(case_id:str,identity=Depends(owner)): return call(lambda:Evaluations(get_store()).run(identity,case_id))

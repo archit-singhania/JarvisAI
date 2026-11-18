@@ -39,21 +39,86 @@ async function renderExpansion(panel,isCurrent){
     offline.append(card(row.body.value.title,row.error||row.body.value.content,`${row.status}${row.result?.revision?' · revision '+row.result.revision:''}`,actions));
   }
   panel.append(offline);
-  const calendar=element('section','card');calendar.append(intro('Calendar planning','Local UTC/IANA-timezone timed-event import/export. Recurring/all-day calendar-file conversion is not yet supported. Google requires an explicitly configured account. Enter explicit offsets to avoid ambiguous daylight-saving times.'));
+  const calendar=element('section','card');calendar.append(intro('Calendar planning','Local UTC/IANA-timezone timed-event import/export. All-day dates use your workspace timezone. Open-ended series report their planning coverage. Google requires an explicitly configured account. Enter explicit offsets to avoid ambiguous daylight-saving times.'));
   const input=element('input');input.type='file';input.accept='.ics';input.setAttribute('aria-label','Import calendar file');input.onchange=async()=>{try{const file=input.files[0];if(!file)return;if(file.size>1000000)throw new Error('Calendar exceeds 1 MB');await api('expansion/calendar/import',json('POST',{text:await file.text()}));await showView('expansion');}catch(error){toast(error.message,true);}};
   calendar.append(input,button('Export calendar',async()=>localDownload('wednesday.ics',(await api('expansion/calendar/export')).text,'text/calendar')),button('Propose a time block',()=>editDialog('Working window',[field('Title','title'),field('Window start with offset','start','text',new Date().toISOString()),field('Window end with offset','end','text',new Date(Date.now()+8*3600000).toISOString()),field('Minutes','minutes','number','30')],async body=>{
     const proposal=await api('expansion/calendar/proposals',json('POST',{...body,minutes:Number(body.minutes)}));const d=memoryDialog('Review proposed block');d.append(card(proposal.title,`${proposal.start} → ${proposal.end}`,'Local calendar only; no invitations.'),button('Approve this exact block',async()=>{await api('expansion/calendar/proposals/'+proposal.id+'/approve',json('POST',{confirmed:true}));d.close();await showView('expansion');}),button('Approve write to selected Google calendar',async()=>{if(!confirm('Create this exact event in the selected Google calendar? No guests will be invited.'))return;await api('expansion/calendar/proposals/'+proposal.id+'/google',json('POST',{confirmed:true}));d.close();await showView('expansion');}),button('Leave unapplied',()=>d.close()));
   })));
-  calendar.append(button('Select configured Google calendar',async()=>{const data=await api('expansion/calendar/google');editDialog('Select Google calendar',[field('Calendar','calendar','text',data.calendars[0]?.id||'',data.calendars.map(c=>[c.id,c.title+' ('+c.role+')']))],body=>api('expansion/calendar/google/connect',json('POST',{...body,confirmed:true})));}),button('Synchronize selected Google calendar',async()=>{await api('expansion/calendar/google/sync',{method:'POST'});await showView('expansion');}),button('Disconnect Google calendar',async()=>{await api('expansion/calendar/google',{method:'DELETE'});await showView('expansion');}));
+  calendar.append(button('Select configured Google calendar',async()=>{const data=await api('expansion/calendar/google');editDialog('Select Google calendar',[field('Calendar','calendar','text',data.calendars[0]?.id||'',data.calendars.map(c=>[c.id,c.title+' ('+c.role+')']))],body=>api('expansion/calendar/google/connect',json('POST',{...body,confirmed:true})));}),button('Synchronize selected Google calendar',async()=>{await api('expansion/calendar/google/sync',{method:'POST'});await showView('expansion');}),button('Disconnect Google calendar',async()=>{const result=await api('expansion/calendar/google',{method:'DELETE'});await showView('expansion');if(result.google_revocation==='unconfirmed')toast('Disconnected locally. Google revocation could not be confirmed.',true);}));
+  calendar.append(button('Sign in with Google', async () => {
+    const result = await api('expansion/calendar/google/oauth/start', {method:'POST'});
+    window.location.assign(result.url);
+  }));
   panel.append(calendar);
   const folders=element('section','card');folders.append(intro('Watched documents','Select folders from the desktop client after explicitly configuring approved host roots. This browser only inspects status and can stop indexing. Scans run every 30 seconds.'));
   panel.append(folders);
   const evaluations=element('section','card');evaluations.append(intro('Local evaluation cases','Save a deliberately redacted query and expected owned source IDs. Runs measure retrieval or Python syntax diagnostics, latency and a labeled synthetic cancellation probe; no model calls or command execution.'));
   evaluations.append(button('Save a reviewed evaluation',()=>editDialog('Review and redact this evaluation',[field('Title','title'),field('Check type','kind','text','retrieval',[['retrieval','Source retrieval'],['python_diagnostics','Python syntax diagnostics']]),field('Redacted query or Python code','query','textarea'),field('Expected source IDs, comma separated (retrieval only)','sources'),field('Expect a syntax error','expect_error','text','false',[['false','No'],['true','Yes']])],body=>api('expansion/evaluations',json('POST',{title:body.title,query:body.query,kind:body.kind,expect_error:body.expect_error==='true',expected_sources:body.sources.split(',').map(v=>v.trim()).filter(Boolean),confirmed:true})))));
+  const suiteStatus = element('p');
+  suiteStatus.setAttribute('role', 'status');
+  const runSuite = button('Run saved evaluation suite', async () => {
+    if (runSuite.getAttribute('aria-disabled') === 'true') return;
+    runSuite.setAttribute('aria-disabled', 'true');
+    suiteStatus.textContent = 'Running saved evaluations…';
+    let summary;
+    try {
+      summary = await api('expansion/evaluations/run-suite', {method:'POST'});
+      suiteStatus.textContent = '';
+    } catch (error) {
+      suiteStatus.textContent = error.message;
+      return;
+    } finally {
+      runSuite.removeAttribute('aria-disabled');
+    }
+    if (!isCurrent()) return;
+    const dialog = element('dialog', 'memory-inspector');
+    const heading = element('h2', '', 'Evaluation suite results');
+    heading.id = 'suite-results-heading';
+    heading.tabIndex = -1;
+    dialog.setAttribute('aria-labelledby', heading.id);
+    dialog.append(heading);
+    dialog.append(card(
+      summary.passed + ' passed · ' + summary.failed + ' failed',
+      'Median ' + summary.median_ms + ' ms · p95 ' + summary.p95_ms + ' ms · ' + summary.reused_retrievals + ' reused retrievals',
+      summary.failed_case_ids.length ? 'Failed cases: ' + summary.failed_case_ids.join(', ') : '',
+      [button('Download suite report', () => localDownload('evaluation-suite.json', JSON.stringify(summary, null, 2))),
+       button('Close results', () => dialog.close())]
+    ));
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      if (isCurrent()) runSuite.focus();
+    }, {once:true});
+    document.body.append(dialog);
+    dialog.showModal();
+    heading.focus();
+  });
+  evaluations.append(runSuite, suiteStatus);
   panel.append(evaluations);
   await Promise.all([
-    api('expansion/calendar').then(data=>{if(isCurrent()){calendar.append(empty(data.google.available?'Configured account: '+data.google.account_label+' · '+(data.google.connection?.calendar||'Choose a calendar'):'Google Calendar unavailable: host credentials and workspace authorization are required.'));data.events.forEach(e=>calendar.append(card(e.title,`${e.start} → ${e.end}`)));}}).catch(error=>calendar.append(empty(error.message))),
-    api('expansion/folders').then(data=>{if(isCurrent()){data.folders.forEach(f=>folders.append(card(f.root,f.error||`${f.files.length} files · ${f.updated_at||'Waiting'}`,f.status,[button('Stop indexing and remove indexed content',async()=>{await api('expansion/folders/'+f.id,{method:'DELETE'});await showView('expansion');})])));if(!data.folders.length)folders.append(empty('No approved folders are being indexed.'));}}).catch(error=>folders.append(empty(error.message))),
+    api('expansion/calendar').then(data=>{if(isCurrent()){if(data.checked_until)calendar.append(empty("Recurring calendar checked through "+data.checked_until));calendar.append(empty(data.google.available?'Configured account: '+data.google.account_label+' · '+(data.google.connection?.calendar||'Choose a calendar'):'Google Calendar unavailable: host credentials and workspace authorization are required.'));data.events.forEach(e=>calendar.append(card(e.title,`${e.start} → ${e.end}`)));}}).catch(error=>calendar.append(empty(error.message))),
+    api('expansion/folders').then(data => {
+      if (!isCurrent()) return;
+      folders.append(button('Refresh watched folders', () => showView('expansion')));
+      for (const folder of data.folders) {
+        const summary = card(folder.root, folder.error || (folder.files.length + ' files'), folder.status, [
+          button('Stop indexing and remove indexed content', async () => {
+            await api('expansion/folders/'+folder.id, {method:'DELETE'});
+            await showView('expansion');
+          }),
+        ]);
+        const failures = folder.files.filter(file => file.error);
+        if (failures.length) {
+          const details = element('details');
+          details.append(element('summary', '', failures.length + ' files need attention'));
+          const list = element('ul');
+          for (const file of failures) list.append(element('li', '', file.path + ' — ' + file.error));
+          details.append(list);
+          summary.append(details);
+        }
+        folders.append(summary);
+      }
+      if (!data.folders.length) folders.append(empty('No approved folders are being indexed.'));
+    }).catch(error => { if (isCurrent()) folders.append(empty(error.message)); }),
     api('expansion/evaluations').then(data=>{if(isCurrent()){data.cases.forEach(c=>evaluations.append(card(c.value.title,c.value.query,c.id,[button('Run read-only evaluation',async()=>{const result=await api('expansion/evaluations/'+c.id+'/run',{method:'POST'});localDownload('evaluation-'+result.id+'.json',JSON.stringify(result,null,2));await showView('expansion');}),button('Delete case and results',async()=>{await api('expansion/evaluations/'+c.id,{method:'DELETE'});await showView('expansion');})])));data.runs.forEach(r=>evaluations.append(card(r.value.passed?'Evaluation passed':'Evaluation failed',r.value.coverage,`${r.value.latency_ms} ms · ${r.created_at}`)));}}).catch(error=>evaluations.append(empty(error.message)))
   ]);
 }

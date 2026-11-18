@@ -19,6 +19,26 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var expansionCheck=e.Args.FirstOrDefault(a=>a.StartsWith("--expansion-check="));
+        if(expansionCheck is not null)
+        {
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            MainWindow? fixture=null;ContinuityWindow? studio=null;
+            try
+            {
+                var client=Environment.GetEnvironmentVariable("WEDNESDAY_CLIENT_DATA");
+                if(Environment.GetEnvironmentVariable("WEDNESDAY_ACCEPTANCE_MODE")!="1"||client is null||!Path.GetFileName(client).StartsWith("native-fixture-")||Directory.Exists(client))throw new InvalidOperationException("Use a fresh isolated native-fixture directory.");
+                fixture=new MainWindow();var vm=(MainViewModel)fixture.DataContext;
+                for(int i=0;i<200&&!File.Exists(Path.Combine(client,"session.json"));i++)await Task.Delay(50);
+                if(!File.Exists(Path.Combine(client,"session.json")))throw new InvalidOperationException("Fixture did not connect: "+vm.ConnectionStatus);
+                studio=vm.CreateContinuityWindow(null,_=>true);
+                var result=await studio.VerifyExpansionAsync();
+                File.WriteAllText(Path.GetFullPath(expansionCheck[18..]),System.Text.Json.JsonSerializer.Serialize(result));
+                studio.Close();fixture.Release();Shutdown(0);
+            }
+            catch(Exception error){SmokeLog(error.ToString());studio?.Close();fixture?.Release();Shutdown(1);}
+            return;
+        }
         var continuityCheck=e.Args.FirstOrDefault(a=>a.StartsWith("--continuity-check="));
         if(continuityCheck is not null)
         {

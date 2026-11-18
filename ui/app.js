@@ -66,9 +66,9 @@ function connect(){
   clearTimeout(state.reconnect);if(state.socket){state.socket.onclose=null;state.socket.close();}
   const url=new URL('/ws',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';if(state.conversation)url.searchParams.set('conversation_id',state.conversation);
   const ws=new WebSocket(url);state.socket=ws;
-  ws.onopen=()=>{$('connection-dot').classList.add('online');$('connection-label').textContent='Workspace connected';};
+  ws.onopen=()=>{$('connection-dot').classList.add('online');setConnectionStatus('Workspace connected');};
   ws.onmessage=event=>{try{dispatch(JSON.parse(event.data));}catch{toast('An invalid service event was received.',true);}};
-  ws.onclose=()=>{$('connection-dot').classList.remove('online');$('connection-label').textContent='Reconnecting…';setActivity('Connection interrupted. Your saved work is safe.');stopAudio();state.reconnect=setTimeout(connect,3000);};
+  ws.onclose=()=>{$('connection-dot').classList.remove('online');setConnectionStatus('Reconnecting…');setActivity('Connection interrupted. Your saved work is safe.');stopAudio();state.reconnect=setTimeout(connect,3000);};
 }
 function send(payload){if(state.socket?.readyState!==WebSocket.OPEN){toast('Wait for the workspace to reconnect.',true);return false;}state.socket.send(JSON.stringify(payload));return true;}
 async function refreshHistory(){
@@ -86,7 +86,7 @@ function editDialog(title,fields,submit){
   $('dialog-title').textContent=title;$('dialog-fields').replaceChildren(...fields);$('editor-form').onsubmit=async event=>{event.preventDefault();const save=event.submitter;save.disabled=true;try{await submit(Object.fromEntries(new FormData(event.currentTarget)));await motion.close($('editor-dialog'));await showView(state.view);}catch(error){toast(error.message,true);}finally{save.disabled=false;}};$('editor-dialog').showModal();motion.enter($('editor-dialog'));
 }
 async function showView(view){
-  const request=++viewRequest;state.view=view;$('view-title').textContent=titles[view];document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.view===view));$('chat-view').hidden=view!=='chat';$('panel-view').hidden=view==='chat';document.querySelectorAll('.nav').forEach(n=>n.setAttribute('aria-current',n.dataset.view===view?'page':'false'));if(view==='chat'){motion.enter($('chat-view'));return;}
+  const request=++viewRequest;state.view=view;$('mobile-view').value=view;$('view-title').textContent=titles[view];document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.view===view));$('chat-view').hidden=view!=='chat';$('panel-view').hidden=view==='chat';document.querySelectorAll('.nav').forEach(n=>n.setAttribute('aria-current',n.dataset.view===view?'page':'false'));if(view==='chat'){motion.enter($('chat-view'));return;}
   const panel=$('panel-view');panel.replaceChildren(empty('Loading your workspace…'));panel.setAttribute('aria-busy','true');motion.enter(panel);
   try{
     if(view==='expansion'){
@@ -156,7 +156,20 @@ $('export').onclick=()=>{const a=document.createElement('a');a.href='/api/export
 $('dialog-close').onclick=$('dialog-cancel').onclick=()=>motion.close($('editor-dialog'));
 $('editor-dialog').addEventListener('cancel',event=>{event.preventDefault();motion.close($('editor-dialog'));});
 document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='n'){event.preventDefault();newConversation().catch(error=>toast(error.message,true));}if(event.key==='Escape')interrupt();if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('history-search').focus();}});
-async function boot(){try{const session=await api('session',{method:'POST'});state.owner=session.owner_id;state.preferences=session.preferences;applyPreferences();state.conversation=localStorage.getItem('wednesday-conversation-'+state.owner);if(state.conversation){try{await api('conversations/'+state.conversation);}catch{state.conversation=null;}}connect();await refreshHistory();if(new URLSearchParams(location.search).get('view')==='settings')showView('settings');}catch(error){toast(error.message,true);$('connection-label').textContent='Service unavailable';}}
+async function boot(){try{const session=await api('session',{method:'POST'});state.owner=session.owner_id;localStorage.setItem('wednesday-offline-owner',state.owner);state.preferences=session.preferences;applyPreferences();state.conversation=localStorage.getItem('wednesday-conversation-'+state.owner);if(state.conversation){try{await api('conversations/'+state.conversation);}catch{state.conversation=null;}}connect();await refreshHistory();const params=new URLSearchParams(location.search);
+if(params.get('view')==='settings')showView('settings');
+if(params.get('view')==='expansion'){
+  await showView('expansion');
+  if(['connected','cancelled','incomplete'].includes(params.get('google'))){
+    history.replaceState(null,'',location.pathname+'?view=expansion');
+    const messages = {
+      connected:'Google Calendar connected. Choose a calendar to synchronize.',
+      cancelled:'Google sign-in cancelled.',
+      incomplete:'Google sign-in could not finish. Try again and grant both calendar permissions.',
+    };
+    toast(messages[params.get('google')]);
+  }
+}}catch(error){toast(error.message,true);setConnectionStatus('Service unavailable');const cached=localStorage.getItem('wednesday-offline-owner');if(cached&&/^[a-f0-9]{32}$/.test(cached)){state.owner=cached;await showView('expansion');}}}
 boot();
 
 // Pointer highlights update only the floating interaction material, at most once per frame.
@@ -172,3 +185,12 @@ boot();
     frame=requestAnimationFrame(()=>{frame=0;const {surface,x,y}=point;const rect=surface.getBoundingClientRect();if(!rect.width||!rect.height)return;surface.style.setProperty('--glass-x',`${Math.round((x-rect.left)/rect.width*100)}%`);surface.style.setProperty('--glass-y',`${Math.round((y-rect.top)/rect.height*100)}%`);});
   },{passive:true});
 })();
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('offline-worker.js').catch(()=>{});
+
+$('mobile-view').addEventListener('change',event=>showView(event.currentTarget.value));
+
+function setConnectionStatus(message) {
+  $('connection-label').textContent = message;
+  $('mobile-connection-status').textContent = message;
+}
