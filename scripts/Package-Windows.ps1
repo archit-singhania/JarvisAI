@@ -51,4 +51,7 @@ Copy-Item -LiteralPath (Join-Path $taskRepo 'docs') -Destination $taskPackage -R
 Copy-Item -LiteralPath (Join-Path $taskRepo 'fixtures') -Destination $taskPackage -Recurse
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Start-Wednesday.ps1') -Destination $taskPackage
 Compress-Archive -Path (Join-Path $taskPackage '*') -DestinationPath "$taskPackage.zip"
-Get-FileHash -LiteralPath "$taskPackage.zip" -Algorithm SHA256 | Select-Object Hash,Path
+$taskHash=Get-FileHash -LiteralPath "$taskPackage.zip" -Algorithm SHA256
+$taskArchiveName=[IO.Path]::GetFileName($taskHash.Path)
+Set-Content -LiteralPath "$taskPackage.zip.sha256" -Value "$($taskHash.Hash)  $taskArchiveName" -Encoding ascii
+$taskHash | Select-Object Hash,Path

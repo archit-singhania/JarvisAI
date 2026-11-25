@@ -1,7 +1,7 @@
 """Bounded document indexing inside operator-approved roots only."""
 import fnmatch
 import hashlib
-from app.extract_pdf import extract_document
+from app.extract_pdf import PDFIsolationUnavailable, extract_document
 import stat
 import json
 import os
@@ -100,6 +100,9 @@ class WatchFolders:
                     raise
                 except TimeoutError:
                     error = 'PDF workers are busy; extraction will retry on the next scan'
+                    content = ''
+                except PDFIsolationUnavailable as exc:
+                    error = str(exc)
                     content = ''
                 except Exception as exc:
                     error=type(exc).__name__+': extraction unavailable'; content=''

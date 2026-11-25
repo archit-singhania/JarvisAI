@@ -49,11 +49,29 @@ async function renderExpansion(panel,isCurrent){
     const result = await api('expansion/calendar/google/oauth/start', {method:'POST'});
     window.location.assign(result.url);
   }));
+  calendar.append(button('Plan several tasks', () => editDialog('Plan several tasks', [
+    field('Window start with UTC offset','start','text',new Date().toISOString()),
+    field('Window end with UTC offset','end','text',new Date(Date.now()+8*3600000).toISOString()),
+    field('One task per line: title | minutes | priority (0–10)','tasks','textarea'),
+  ], async body => {
+    const tasks = body.tasks.split(/\r?\n/).filter(line => line.trim()).map(line => {
+      const [title, minutes, priority='0'] = line.split('|').map(value => value.trim());
+      return {title, minutes:Number(minutes), priority:Number(priority)};
+    });
+    const proposal = await api('expansion/calendar/task-plans',json('POST',{start:body.start,end:body.end,tasks}));
+    const dialog = memoryDialog('Review task plan');
+    for (const block of proposal.blocks) dialog.append(card(block.title,block.start+' → '+block.end));
+    dialog.append(button('Approve all blocks locally',async()=>{
+      await api('expansion/calendar/proposals/'+proposal.id+'/approve',json('POST',{confirmed:true}));
+      dialog.close();
+      await showView('expansion');
+    }),button('Cancel',()=>dialog.close()));
+  })));
   panel.append(calendar);
   const folders=element('section','card');folders.append(intro('Watched documents','Select folders from the desktop client after explicitly configuring approved host roots. This browser only inspects status and can stop indexing. Scans run every 30 seconds.'));
   panel.append(folders);
-  const evaluations=element('section','card');evaluations.append(intro('Local evaluation cases','Save a deliberately redacted query and expected owned source IDs. Runs measure retrieval or Python syntax diagnostics, latency and a labeled synthetic cancellation probe; no model calls or command execution.'));
-  evaluations.append(button('Save a reviewed evaluation',()=>editDialog('Review and redact this evaluation',[field('Title','title'),field('Check type','kind','text','retrieval',[['retrieval','Source retrieval'],['python_diagnostics','Python syntax diagnostics']]),field('Redacted query or Python code','query','textarea'),field('Expected source IDs, comma separated (retrieval only)','sources'),field('Expect a syntax error','expect_error','text','false',[['false','No'],['true','Yes']])],body=>api('expansion/evaluations',json('POST',{title:body.title,query:body.query,kind:body.kind,expect_error:body.expect_error==='true',expected_sources:body.sources.split(',').map(v=>v.trim()).filter(Boolean),confirmed:true})))));
+  const evaluations=element('section','card');evaluations.append(intro('Local evaluation cases','Save a deliberately redacted query and expected owned source IDs. Runs measure source retrieval, Python syntax, or calendar timestamp normalization, latency and a labeled synthetic cancellation probe; no model calls or command execution.'));
+  evaluations.append(button('Save a reviewed evaluation',()=>editDialog('Review and redact this evaluation',[field('Title','title'),field('Check type','kind','text','retrieval',[['retrieval','Source retrieval'],['python_diagnostics','Python syntax diagnostics'],['calendar_timezone','Calendar timestamp normalization']]),field('Redacted query, Python code, or timestamp','query','textarea'),field('Expected source IDs, comma separated (retrieval only)','sources'),field('Expected UTC timestamp (calendar only)','expected_utc'),field('Expected error line (Python only, optional)','expected_line'),field('Expect invalid input','expect_error','text','false',[['false','No'],['true','Yes']])],body=>api('expansion/evaluations',json('POST',{title:body.title,query:body.query,kind:body.kind,expect_error:body.expect_error==='true',expected_utc:body.expected_utc.trim()||null,expected_line:body.expected_line.trim()||null,expected_sources:body.sources.split(',').map(v=>v.trim()).filter(Boolean),confirmed:true})))));
   const suiteStatus = element('p');
   suiteStatus.setAttribute('role', 'status');
   const runSuite = button('Run saved evaluation suite', async () => {

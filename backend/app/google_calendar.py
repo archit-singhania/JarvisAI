@@ -255,7 +255,10 @@ class GoogleCalendar:
         if not row or not connection: raise HTTPException(404,'Proposal or selected calendar unavailable')
         if receipt and receipt['calendar']!=connection['calendar']: raise HTTPException(409,'Proposal belongs to another calendar')
         if receipt and receipt['status']=='completed':return {'status':'completed','id':proposal}
-        value=json.loads(row['value']);path='calendars/'+quote(connection['calendar'],safe='')+'/events'
+        value=json.loads(row['value'])
+        if 'blocks' in value:
+            raise HTTPException(422,'Task plans are approved on the local calendar')
+        path='calendars/'+quote(connection['calendar'],safe='')+'/events'
         # Recover a write whose HTTP response was lost using its deterministic Google event ID.
         recovered=None
         if receipt:
@@ -267,7 +270,15 @@ class GoogleCalendar:
                 raise HTTPException(409,'Calendar changed; inspect any pending Google event before reviewing a new proposal')
         if not receipt:
             if row['applied']: raise HTTPException(409,'Already applied locally; create a fresh Google proposal')
-            with self.store.db() as db:db.execute("INSERT INTO google_writes VALUES(?,?,?,'pending')",(owner,proposal,connection['calendar']))
+            with self.store.db() as db:
+                db.execute("INSERT INTO google_writes VALUES(?,?,?,'pending') ON CONFLICT DO NOTHING",
+                           (owner,proposal,connection['calendar']))
+                pending = db.execute('SELECT calendar,status FROM google_writes WHERE owner=? AND proposal=?',
+                                     (owner,proposal)).fetchone()
+            if pending['calendar'] != connection['calendar']:
+                raise HTTPException(409,'Proposal belongs to another calendar')
+            if pending['status'] == 'completed':
+                return {'status':'completed','id':proposal}
         payload={'id':proposal,'summary':value['title'],'start':{'dateTime':value['start']},'end':{'dateTime':value['end']},'extendedProperties':{'private':{'wednesdayProposal':proposal}}}
         response=recovered or self.request(owner,'POST',path,params={'sendUpdates':'none'},json=payload)
         if response.status_code==409:
@@ -275,7 +286,18 @@ class GoogleCalendar:
         if recovered is not None or response.status_code==200:
             from app.planning import instant
             existing=response.json()
-            if existing.get('extendedProperties',{}).get('private',{}).get('wednesdayProposal')!=proposal or instant(existing.get('start',{}).get('dateTime',''))!=instant(value['start']) or instant(existing.get('end',{}).get('dateTime',''))!=instant(value['end']): raise HTTPException(409,'Existing event differs; inspect Google Calendar before retrying')
+            try:
+                matches = (
+                    existing.get('status') != 'cancelled'
+                    and existing.get('summary') == value['title']
+                    and existing.get('extendedProperties',{}).get('private',{}).get('wednesdayProposal') == proposal
+                    and instant(existing.get('start',{}).get('dateTime','')) == instant(value['start'])
+                    and instant(existing.get('end',{}).get('dateTime','')) == instant(value['end'])
+                )
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                matches = False
+            if not matches:
+                raise HTTPException(409,'Existing event differs; inspect Google Calendar before retrying')
         if response.status_code not in (200,201):raise HTTPException(502,'Google write incomplete; retry only after review')
         with self.store.db() as db:
             db.execute("UPDATE google_writes SET status='completed' WHERE owner=? AND proposal=?",(owner,proposal))

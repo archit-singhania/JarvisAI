@@ -1,5 +1,6 @@
 """Single-use PDF worker. Receive document bytes through stdin only."""
 import io
+import errno
 import sys
 import os
 import subprocess
@@ -9,6 +10,11 @@ from threading import BoundedSemaphore
 
 MEMORY_LIMIT = 384 * 1024 * 1024
 PARSER_SLOTS = BoundedSemaphore(2)
+ISOLATION_UNAVAILABLE_EXIT = 78
+
+
+class PDFIsolationUnavailable(RuntimeError):
+    """The configured filesystem isolation policy could not be applied."""
 
 
 def limit_worker_memory():
@@ -67,6 +73,46 @@ def restrict_parser_io():
     sys.addaudithook(audit)
 
 
+def restrict_linux_filesystem():
+    """Deny new file access in the worker on supported Linux kernels."""
+    if sys.platform != 'linux' or os.uname().machine not in {'x86_64', 'aarch64'}:
+        return False
+
+    import ctypes as ct
+
+    libc = ct.CDLL(None, use_errno=True)
+    libc.syscall.restype = ct.c_long
+    create_ruleset, restrict_self = 444, 446
+    abi = libc.syscall(create_ruleset, None, 0, 1)  # LANDLOCK_CREATE_RULESET_VERSION
+    if abi < 0:
+        error = ct.get_errno()
+        if error in {errno.ENOSYS, errno.EOPNOTSUPP}:
+            return False
+        raise OSError(error, os.strerror(error))
+
+    # ABI 1 handles execute, read, write and directory entry operations.
+    rights = (1 << 13) - 1
+    if abi >= 2:
+        rights |= 1 << 13  # Refer (cross-directory rename/link).
+    if abi >= 3:
+        rights |= 1 << 14  # Truncate.
+    if abi >= 5:
+        rights |= 1 << 15  # Device ioctl.
+    handled = ct.c_uint64(rights)
+    fd = libc.syscall(create_ruleset, ct.byref(handled), ct.sizeof(handled), 0)
+    if fd < 0:
+        error = ct.get_errno()
+        raise OSError(error, os.strerror(error))
+    try:
+        # PR_SET_NO_NEW_PRIVS permits unprivileged enforcement. No paths are granted.
+        if libc.prctl(38, 1, 0, 0, 0) < 0 or libc.syscall(restrict_self, fd, 0) < 0:
+            error = ct.get_errno()
+            raise OSError(error, os.strerror(error))
+    finally:
+        os.close(fd)
+    return True
+
+
 def extract_document(data, *, upload=False):
     mode = 'upload' if upload else 'watch'
     if not PARSER_SLOTS.acquire(timeout=10):
@@ -76,8 +122,16 @@ def extract_document(data, *, upload=False):
             [sys.executable, '-I', str(Path(__file__).resolve()), mode],
             input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=10, check=True,
-            env={key: os.environ[key] for key in ('SystemRoot','TEMP','TMP','PATH') if key in os.environ},
+            env={key: os.environ[key] for key in (
+                'SystemRoot', 'TEMP', 'TMP', 'PATH', 'WEDNESDAY_REQUIRE_PDF_LANDLOCK',
+            ) if key in os.environ},
         )
+    except subprocess.CalledProcessError as error:
+        if error.returncode == ISOLATION_UNAVAILABLE_EXIT:
+            raise PDFIsolationUnavailable(
+                'PDF extraction requires OS filesystem isolation on this host.'
+            ) from None
+        raise
     finally:
         PARSER_SLOTS.release()
     return result.stdout.decode('utf-8')
@@ -107,5 +161,14 @@ if __name__ == "__main__":
     upload = sys.argv[1:] == ['upload']
     byte_limit = (10 if upload else 4) * 1024 * 1024
     data = sys.stdin.buffer.read(byte_limit + 1)
+    requires_isolation = os.environ.get('WEDNESDAY_REQUIRE_PDF_LANDLOCK') == '1'
+    try:
+        isolated = restrict_linux_filesystem()
+    except OSError:
+        if requires_isolation:
+            sys.exit(ISOLATION_UNAVAILABLE_EXIT)
+        raise
+    if requires_isolation and not isolated:
+        sys.exit(ISOLATION_UNAVAILABLE_EXIT)
     restrict_parser_io()
     sys.stdout.buffer.write(extract(data, PdfReader, byte_limit, 2000000 if upload else 200000).encode("utf-8"))

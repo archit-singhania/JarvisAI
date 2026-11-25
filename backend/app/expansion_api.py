@@ -46,6 +46,16 @@ class Proposal(Strict):
 class Approval(Strict):
     confirmed: Literal[True]
 
+class TaskBlock(Strict):
+    title: str = Field(min_length=1,max_length=200)
+    minutes: int = Field(ge=5,le=480)
+    priority: int = Field(default=0,ge=0,le=10)
+
+class TaskPlan(Strict):
+    start: str = Field(max_length=60)
+    end: str = Field(max_length=60)
+    tasks: list[TaskBlock] = Field(min_length=1,max_length=20)
+
 class Watch(Approval):
     root: str=Field(min_length=1,max_length=1000)
     exclusions: list[str]=Field(default_factory=list,max_length=50)
@@ -54,12 +64,18 @@ class Case(Approval):
     title: str=Field(min_length=1,max_length=200)
     query: str=Field(min_length=1,max_length=2000)
     expected_sources: list[str]=Field(default_factory=list,max_length=20)
-    kind: Literal['retrieval','python_diagnostics']='retrieval'
+    kind: Literal['retrieval','python_diagnostics','calendar_timezone']='retrieval'
     expect_error: bool=False
+    expected_line: int | None=Field(default=None,ge=1,le=2000)
+    expected_utc: str | None=Field(default=None,max_length=40)
 
     @model_validator(mode='after')
     def require_sources(self):
+        if self.expected_line is not None and (self.kind != 'python_diagnostics' or not self.expect_error):
+            raise ValueError('Expected line applies only to a Python syntax error')
         if self.kind=='retrieval' and not self.expected_sources:raise ValueError('Select expected sources for a retrieval case')
+        if self.kind == 'calendar_timezone' and not self.expect_error and not self.expected_utc:
+            raise ValueError('Enter the expected UTC timestamp for a valid calendar input')
         return self
 
 class GoogleSelection(Approval):
@@ -146,6 +162,10 @@ def router(get_store, owner):
 
     @routes.post('/calendar/proposals')
     def propose(body:Proposal,identity=Depends(owner)): return call(lambda:Planning(get_store()).propose(identity,**body.model_dump()))
+
+    @routes.post('/calendar/task-plans')
+    def propose_tasks(body:TaskPlan,identity=Depends(owner)):
+        return call(lambda:Planning(get_store()).propose_tasks(identity,**body.model_dump()))
 
     @routes.post('/calendar/proposals/{proposal}/approve')
     def approve(proposal:str,body:Approval,identity=Depends(owner)): return call(lambda:Planning(get_store()).approve(identity,proposal))

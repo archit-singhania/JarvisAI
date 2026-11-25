@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 from itertools import islice
+from time import monotonic
 from dateutil.rrule import rrulestr
 from fastapi import HTTPException
 
@@ -154,6 +155,7 @@ class Planning:
         cancelled_series = set()
         nested = []
         method = None
+        expansion_deadline = monotonic() + 2
         for line in lines:
             if current is None and line.startswith('METHOD:'):
                 method = line.split(':', 1)[1].upper()
@@ -267,20 +269,23 @@ class Planning:
                 occurrences = [start_at]
                 if rule:
                     bounded = any(part.startswith(('COUNT=', 'UNTIL=')) for part in rule.split(';'))
-                    limit = 9000 if not bounded and (uid == extend_uid or uid in prior_coverage) else 1000
                     target = through if uid == extend_uid else prior_coverage.get(uid)
+                    extend_open_series = target is not None and not bounded
                     if is_all_day:
                         rule = ';'.join(part+'T235959' if part.startswith('UNTIL=') and len(part)==14 else part for part in rule.split(';'))
                         generated = (value.replace(tzinfo=zone) for value in rrulestr(rule, dtstart=first))
                     else:
                         generated = iter(rrulestr(rule, dtstart=start_at))
                     occurrences = []
-                    for occurrence in islice(generated, limit+1):
+                    candidates = generated if extend_open_series else islice(generated, 1001)
+                    for occurrence in candidates:
+                        if extend_open_series and monotonic() >= expansion_deadline:
+                            raise HTTPException(422, 'Calendar recurrence coverage could not be verified within the expansion budget')
                         if target and len(occurrences) >= 1000 and occurrence.astimezone(timezone.utc) >= target:
                             coverage[uid] = occurrence.astimezone(timezone.utc).isoformat()
                             break
                         occurrences.append(occurrence)
-                    if len(occurrences)>limit:
+                    if not extend_open_series and len(occurrences)>1000:
                         if bounded:
                             raise ValueError('Recurring series exceeds 1000 occurrences')
                         coverage[uid] = occurrences.pop().astimezone(timezone.utc).isoformat()
@@ -301,7 +306,7 @@ class Planning:
                 if additions or exclusions:
                     occurrences = sorted(({value.astimezone(timezone.utc) for value in occurrences} | additions) - exclusions)
                     occurrences = [value.astimezone(start_at.tzinfo) for value in occurrences]
-                if len(occurrences) > (9000 if uid == extend_uid or uid in prior_coverage else 1000):
+                if len(occurrences) > 1000 and not (rule and extend_open_series):
                     raise ValueError('Recurring series exceeds the occurrence limit')
                 series[uid] = []
                 for occurrence in occurrences:
@@ -313,7 +318,7 @@ class Planning:
                     events.append((owner,key,current.get('SUMMARY','Event')[:200].replace(chr(92)+'n',chr(10)).replace(chr(92)+',',',').replace(chr(92)+';',';'),
                                    occurrence.astimezone(timezone.utc).isoformat(),
                                    occurrence_end.astimezone(timezone.utc).isoformat()))
-                    if len(events)>10000:
+                    if len(events)>10000 and extend_uid is None and not prior_coverage:
                         raise ValueError('Import exceeds 10000 occurrences')
                 current = None
             elif current is not None and ':' in line:
@@ -494,6 +499,13 @@ class Planning:
         return '\r\n'.join(folded+[''])
 
     def propose(self, owner, title, start, end, minutes):
+        return self._propose(owner, title, start, end, [{"title": title, "minutes": minutes}])
+
+    def propose_tasks(self, owner, start, end, tasks):
+        ordered = sorted(tasks, key=lambda task: -task["priority"])
+        return self._propose(owner, "Task plan", start, end, ordered, batch=True)
+
+    def _propose(self, owner, title, start, end, tasks, batch=False):
         start, end = instant(start), instant(end)
         if end <= start or end-start > timedelta(days=7): raise ValueError('Choose a working window of at most seven days')
         with self.store.db() as db:
@@ -506,16 +518,25 @@ class Planning:
             db.execute('BEGIN IMMEDIATE')
             self.require_coverage(end, self._checked_until(db, owner))
             events = self._events(db, owner)
-            cursor = start
-            duration = timedelta(minutes=minutes)
-            for event in events:
-                event_start, event_end = instant(event['start']), instant(event['end'])
-                if event_end <= cursor: continue
-                if event_start >= cursor + duration: break
-                cursor = max(cursor, event_end)
-            if cursor + duration > end:
-                raise HTTPException(409,'No free block fits this working window')
-            value = {'id':uuid4().hex,'title':title,'start':cursor.isoformat(),'end':(cursor+duration).isoformat()}
+            occupied = [(instant(event['start']), instant(event['end'])) for event in events]
+            blocks = []
+            for task in tasks:
+                cursor = start
+                duration = timedelta(minutes=task["minutes"])
+                for event_start, event_end in sorted(occupied):
+                    if event_end <= cursor:
+                        continue
+                    if event_start >= cursor + duration:
+                        break
+                    cursor = max(cursor, event_end)
+                if cursor + duration > end:
+                    raise HTTPException(409, f"No free block fits {task['title']} in this working window")
+                occupied.append((cursor, cursor + duration))
+                blocks.append({'id':uuid4().hex,'title':task['title'],'start':cursor.isoformat(),'end':(cursor+duration).isoformat()})
+            value = blocks[0]
+            if batch:
+                value = {'id':uuid4().hex,'title':title,'start':min(block['start'] for block in blocks),
+                         'end':max(block['end'] for block in blocks),'blocks':blocks}
             db.execute('INSERT INTO calendar_proposals VALUES(?,?,?,?,0)',(owner,value['id'],json.dumps(value),self.digest(events)))
         return value
 
@@ -529,6 +550,8 @@ class Planning:
             self.require_coverage(instant(value['end']), self._checked_until(db, owner))
             events=self._events(db, owner)
             if not self.matches_snapshot(events,row['snapshot']): raise HTTPException(409,'Calendar changed; create and review a new proposal')
-            db.execute('INSERT INTO calendar_events VALUES(?,?,?,?,?)',(owner,identity,value['title'],value['start'],value['end']))
+            for block in value.get('blocks', [value]):
+                db.execute('INSERT INTO calendar_events VALUES(?,?,?,?,?)',
+                           (owner,block['id'],block['title'],block['start'],block['end']))
             db.execute('UPDATE calendar_proposals SET applied=1 WHERE owner=? AND id=?',(owner,identity))
         return {'status':'applied','id':identity}

@@ -71,8 +71,19 @@ public sealed partial class ContinuityWindow
         Button(p,"Approve Google event write",async()=>{if(proposal==null)throw new InvalidOperationException("Create and inspect a proposal first.");if(Confirm("Create the proposed event in the selected Google calendar? No guests will be invited."))ShowJson(output,await api("expansion/calendar/proposals/"+proposal+"/google",HttpMethod.Post,new{confirmed=true}));});
         Button(p,"Import calendar file",async()=>{var dialog=new OpenFileDialog{Filter="Calendar|*.ics"};if(dialog.ShowDialog()!=true)return;if(new FileInfo(dialog.FileName).Length>1000000)throw new InvalidOperationException("Calendar exceeds 1 MB");ShowJson(output,await api("expansion/calendar/import",HttpMethod.Post,new{text=File.ReadAllText(dialog.FileName)}));});
         Button(p,"Export calendar",async()=>SaveText("wednesday.ics",Text(await api("expansion/calendar/export",null,null),"text")));
+        var tasks=Field(p,"Tasks: title | minutes | priority (0–10)","",true);
+        Button(p,"Propose several tasks",async()=>{
+            var entries=Lines(tasks.Text).Select(line=>{
+                var parts=line.Split('|',StringSplitOptions.TrimEntries);
+                if(parts.Length is < 2 or > 3)throw new InvalidOperationException("Enter title | minutes | priority on each line.");
+                return new{title=parts[0],minutes=int.Parse(parts[1]),priority=parts.Length==3?int.Parse(parts[2]):0};
+            }).ToArray();
+            var result=await api("expansion/calendar/task-plans",HttpMethod.Post,new{start=start.Text,end=end.Text,tasks=entries});
+            proposal=Text(result,"id");
+            ShowJson(output,result);
+        });
         Button(p,"Propose free block",async()=>{var result=await api("expansion/calendar/proposals",HttpMethod.Post,new{title=title.Text,start=start.Text,end=end.Text,minutes=int.Parse(minutes.Text)});proposal=Text(result,"id");ShowJson(output,result);});
-        Button(p,"Approve displayed proposal",async()=>{if(proposal==null)throw new InvalidOperationException("Create a proposal first");if(Confirm("Add the displayed block to the local calendar? No invitations will be sent."))ShowJson(output,await api("expansion/calendar/proposals/"+proposal+"/approve",HttpMethod.Post,new{confirmed=true}));});return p;
+        Button(p,"Approve displayed proposal",async()=>{if(proposal==null)throw new InvalidOperationException("Create a proposal first");if(Confirm("Add the displayed blocks to the local calendar? No invitations will be sent."))ShowJson(output,await api("expansion/calendar/proposals/"+proposal+"/approve",HttpMethod.Post,new{confirmed=true}));});return p;
     }
     private StackPanel WatchedFolders()
     {
@@ -85,11 +96,23 @@ public sealed partial class ContinuityWindow
     }
     private StackPanel LocalEvaluations()
     {
-        var p=Panel("Reproducible source checks","Explicitly redact queries before saving. Runs measure retrieval or Python syntax diagnostics and a synthetic cancellation probe. No commands, external writes or model calls.");
-        var kind=Choice(p,"Evaluation check","retrieval","python_diagnostics");var expectError=Check(p,"Expect a Python syntax error");
+        var p=Panel("Reproducible source checks","Redact inputs before saving. Checks cover source retrieval, Python syntax and calendar timestamps, alongside a synthetic cancellation probe. No commands, external writes or model calls.");
+        var kind=Choice(p,"Evaluation check","retrieval","python_diagnostics","calendar_timezone");var expectError=Check(p,"Expect invalid input");
+        var expectedUtc=Field(p,"Expected UTC timestamp (calendar only)");
+        var expectedLine=Field(p,"Expected error line (Python only, optional)");
         TextBox title=Field(p,"Case title"),query=Field(p,"Redacted query","",true),sources=Field(p,"Expected owned source IDs, one per line","",true),id=Field(p,"Case ID to run/delete"),output=Field(p,"Cases and measurements","",true);output.IsReadOnly=true;
         Button(p,"Load cases and results",async()=>ShowJson(output,await api("expansion/evaluations",null,null)));
-        Button(p,"Save reviewed case",async()=>{if(Confirm("I reviewed and redacted this query for local evaluation storage."))ShowJson(output,await api("expansion/evaluations",HttpMethod.Post,new{title=title.Text,query=query.Text,kind=kind.SelectedItem?.ToString(),expect_error=expectError.IsChecked==true,expected_sources=Lines(sources.Text),confirmed=true}));});
+        Button(p,"Save reviewed case",async()=>{
+            int? line = null;
+            if (!string.IsNullOrWhiteSpace(expectedLine.Text))
+            {
+                if (!int.TryParse(expectedLine.Text, out var number) || number < 1)
+                    throw new InvalidOperationException("Enter a positive error line number.");
+                line = number;
+            }
+            if(Confirm("I reviewed and redacted this query for local evaluation storage."))
+                ShowJson(output,await api("expansion/evaluations",HttpMethod.Post,new{title=title.Text,query=query.Text,kind=kind.SelectedItem?.ToString(),expect_error=expectError.IsChecked==true,expected_sources=Lines(sources.Text),expected_line=line,expected_utc=string.IsNullOrWhiteSpace(expectedUtc.Text)?null:expectedUtc.Text.Trim(),confirmed=true}));
+        });
         var suiteStatus = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
         AutomationProperties.SetLiveSetting(suiteStatus, AutomationLiveSetting.Polite);
         void Announce(string message)

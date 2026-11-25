@@ -273,13 +273,13 @@ def documents(identity=Depends(owner)):
 
 @app.post('/api/documents')
 async def upload_document(file: UploadFile,identity=Depends(owner)):
+    from app.extract_pdf import PDFIsolationUnavailable, extract_document
     raw = await file.read(10*1024*1024+1)
     if len(raw)>10*1024*1024:
         raise HTTPException(413,'Document exceeds 10 MB')
     filename = Path(file.filename or 'document').name
     try:
         if filename.lower().endswith('.pdf'):
-            from app.extract_pdf import extract_document
             text = await asyncio.to_thread(extract_document, raw, upload=True)
         elif Path(filename).suffix.lower() in ('.txt','.md','.csv','.json','.py','.js','.ts','.cs','.dart'):
             text = raw.decode('utf-8-sig')
@@ -289,6 +289,8 @@ async def upload_document(file: UploadFile,identity=Depends(owner)):
         raise
     except TimeoutError:
         raise HTTPException(503,'PDF workers are busy. Try again shortly.') from None
+    except PDFIsolationUnavailable as error:
+        raise HTTPException(503, str(error)) from None
     except Exception:
         raise HTTPException(422,'Document could not be read; scanned PDFs require OCR before import')
     if not text.strip():

@@ -104,6 +104,15 @@ def test_evaluations_detect_missing_sources_without_tools(tmp_path):
     result=service.run(a,diagnostic['id'])
     assert result['passed'] and result['diagnostic']['line']==1
     assert result['cancellation_probe']['passed']
+    for expected_line in (2, 3):
+        located = service.save(a, {
+            'title': 'Syntax location', 'kind': 'python_diagnostics',
+            'query': 'x = 1\ndef broken(:', 'expect_error': True,
+            'expected_sources': [], 'expected_line': expected_line,
+        })
+        result = service.run(a, located['id'])
+        assert result['diagnostic']['line'] == 2
+        assert result['passed'] == (expected_line == 2)
 
 
 def test_expansion_api_rejects_commands_unauthorized_and_missing_confirmation(tmp_path,monkeypatch):
@@ -138,7 +147,7 @@ def test_google_incremental_reset_idempotent_writes_and_owner_boundary(tmp_path,
             value=json.loads(request.content);assert 'attendees' not in value
             assert request.url.params['sendUpdates']=='none'
             writes.append(value['id']);events[value['id']]=value
-            return httpx.Response(201,json=value)
+            return httpx.Response(503,json={})
         if request.url.path.endswith('/events'):
             if reset[0] and request.url.params.get('syncToken'):
                 reset[0]=False;return httpx.Response(410,json={})
@@ -152,6 +161,14 @@ def test_google_incremental_reset_idempotent_writes_and_owner_boundary(tmp_path,
         assert not service.sync(a)['full_sync']
         reset[0]=True;assert service.sync(a)['full_sync']
         proposal=Planning(store).propose(a,'Reviewed block','2027-01-01T10:00:00Z','2027-01-01T12:00:00Z',30)
+        with pytest.raises(HTTPException) as failure:
+            service.approve(a,proposal['id'])
+        assert failure.value.status_code == 502
+        events[proposal['id']]['summary'] = 'Unreviewed edit'
+        with pytest.raises(HTTPException) as conflict:
+            service.approve(a,proposal['id'])
+        assert conflict.value.status_code == 409
+        events[proposal['id']]['summary'] = 'Reviewed block'
         assert service.approve(a,proposal['id'])['status']=='completed'
         assert service.approve(a,proposal['id'])['status']=='completed'
         assert len(writes)==1
@@ -216,14 +233,31 @@ def test_moved_and_cancelled_occurrences_replace_original_slots(tmp_path):
     assert [event['start'][:10] for event in planner.events(owner)] == ['2027-01-01', '2027-01-08', '2027-01-15']
 
 
-def test_open_recurrence_reports_coverage_and_rejects_unchecked_windows(tmp_path):
+def test_open_recurrence_expands_past_9000_occurrences(tmp_path):
     store, owner, _ = setup(tmp_path)
     planner = Planning(store)
     outcome = planner.import_ics(owner, ICS.replace('SUMMARY:Meeting', 'RRULE:FREQ=DAILY'))
     assert outcome['imported'] == 1000
     assert outcome['checked_until']
-    with pytest.raises(HTTPException, match='coverage'):
-        planner.propose(owner, 'Unchecked', '2060-01-01T10:00:00Z', '2060-01-01T12:00:00Z', 30)
+    proposal = planner.propose(owner, 'Future', '2060-01-01T10:00:00Z', '2060-01-01T12:00:00Z', 30)
+    assert proposal['start'] == '2060-01-01T11:00:00+00:00'
+    assert planner.approve(owner, proposal['id'])['status'] == 'applied'
+
+
+def test_recurrence_budget_failure_preserves_existing_coverage(tmp_path, monkeypatch):
+    store, owner, _ = setup(tmp_path)
+    planner = Planning(store)
+    original = planner.import_ics(owner, ICS.replace('SUMMARY:Meeting', 'RRULE:FREQ=DAILY'))
+    clock = iter((0, 3))
+    monkeypatch.setattr('app.planning.monotonic', lambda: next(clock))
+
+    with pytest.raises(HTTPException, match='expansion budget'):
+        planner.propose(owner, 'Future', '2060-01-01T10:00:00Z', '2060-01-01T12:00:00Z', 30)
+
+    with store.db() as db:
+        assert planner._checked_until(db, owner) == original['checked_until']
+        assert len(planner._events(db, owner)) == 1000
+
 
 def test_approval_rechecks_coverage_even_when_event_snapshot_is_unchanged(tmp_path):
     store, owner, _ = setup(tmp_path)
@@ -233,6 +267,22 @@ def test_approval_rechecks_coverage_even_when_event_snapshot_is_unchanged(tmp_pa
         db.execute('INSERT INTO calendar_coverage VALUES(?,?,?)', (owner, 'series', '2039-01-01T00:00:00+00:00'))
     with pytest.raises(HTTPException, match='coverage'):
         planner.approve(owner, proposal['id'])
+
+def test_calendar_evaluation_distinguishes_dst_offsets_and_rejects_naive_time(tmp_path):
+    store, owner, _ = setup(tmp_path)
+    service = Evaluations(store)
+    for query, expected, invalid, passed in [
+        ('2027-11-07T01:30:00-04:00', '2027-11-07T05:30:00Z', False, True),
+        ('2027-11-07T01:30:00-05:00', '2027-11-07T05:30:00Z', False, False),
+        ('2027-11-07T01:30:00', None, True, True),
+    ]:
+        case = service.save(owner, {'title': 'Calendar offsets', 'kind': 'calendar_timezone',
+            'query': query, 'expected_utc': expected, 'expect_error': invalid, 'expected_sources': []})
+        result = service.run(owner, case['id'])
+        assert result['passed'] is passed
+        assert result['formula_version'] == 'calendar-timezone-v1'
+    assert not Planning(store).events(owner)
+
 
 def test_suite_reports_failures_and_only_runs_owned_cases(tmp_path):
     store, owner, other = setup(tmp_path)
@@ -583,6 +633,94 @@ for label, action in [
     assert result.stdout.splitlines() == ['file read', 'file write', 'network socket', 'process launch']
     assert not fixture.with_suffix('.txt.new').exists()
 
+def test_linux_pdf_worker_rejects_native_file_access(tmp_path):
+    import subprocess
+    import sys
+    from app import extract_pdf
+
+    if sys.platform != 'linux':
+        pytest.skip('Landlock applies to Linux workers')
+    fixture = tmp_path / 'private.txt'
+    fixture.write_text('fixture')
+    script = """
+import ctypes
+import os
+import runpy
+import sys
+worker = runpy.run_path(sys.argv[1])
+libc = ctypes.CDLL(None, use_errno=True)
+path = os.fsencode(sys.argv[2])
+assert libc.close(libc.open(path, os.O_RDONLY)) == 0
+if not worker['restrict_linux_filesystem']():
+    sys.exit(77)
+for flags in (os.O_RDONLY, os.O_WRONLY | os.O_TRUNC):
+    assert libc.open(path, flags) == -1 and ctypes.get_errno() == 13
+"""
+    result = subprocess.run([sys.executable, '-I', '-c', script,
+                             extract_pdf.__file__, str(fixture)],
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode == 77:
+        pytest.skip('Landlock unavailable on this kernel')
+    assert result.returncode == 0, result.stderr
+    assert fixture.read_text() == 'fixture'
+
+
+def test_pdf_worker_forwards_strict_isolation_policy(monkeypatch):
+    from subprocess import CalledProcessError
+    from types import SimpleNamespace
+    from app import extract_pdf
+
+    monkeypatch.setenv('WEDNESDAY_REQUIRE_PDF_LANDLOCK', '1')
+    monkeypatch.setenv('WEDNESDAY_TEST_PRIVATE_TOKEN', 'fixture')
+
+    def worker(*args, **kwargs):
+        assert kwargs['env']['WEDNESDAY_REQUIRE_PDF_LANDLOCK'] == '1'
+        assert 'WEDNESDAY_TEST_PRIVATE_TOKEN' not in kwargs['env']
+        return SimpleNamespace(stdout=b'fixture')
+
+    monkeypatch.setattr(extract_pdf.subprocess, 'run', worker)
+    assert extract_pdf.extract_document(b'fixture') == 'fixture'
+
+    def unavailable(*args, **kwargs):
+        raise CalledProcessError(extract_pdf.ISOLATION_UNAVAILABLE_EXIT, args[0])
+
+    monkeypatch.setattr(extract_pdf.subprocess, 'run', unavailable)
+    with pytest.raises(extract_pdf.PDFIsolationUnavailable, match='requires OS filesystem isolation'):
+        extract_pdf.extract_document(b'fixture', upload=True)
+
+
+def test_pdf_isolation_failure_does_not_index_upload_or_watched_file(tmp_path, monkeypatch):
+    from subprocess import CalledProcessError
+    from fastapi.testclient import TestClient
+    from app import extract_pdf, main
+
+    store, owner, _ = setup(tmp_path)
+    monkeypatch.setattr(main, 'store', store)
+
+    def refuse(*args, **kwargs):
+        raise CalledProcessError(extract_pdf.ISOLATION_UNAVAILABLE_EXIT, args[0])
+
+    monkeypatch.setattr(extract_pdf.subprocess, 'run', refuse)
+    with TestClient(main.app) as client:
+        client.post('/api/session')
+        result = client.post('/api/documents', files={'file': ('note.pdf', b'fixture', 'application/pdf')})
+        assert result.status_code == 503
+        detail = result.json()['detail']
+        assert 'requires OS filesystem isolation' in detail
+        assert client.get('/api/documents').json()['documents'] == []
+
+    root = tmp_path / 'strict-pdf'
+    root.mkdir()
+    (root / 'note.pdf').write_bytes(b'fixture')
+    monkeypatch.setenv('WEDNESDAY_WATCH_ROOTS', str(root))
+    monkeypatch.setenv('WEDNESDAY_WATCH_OWNER', owner)
+    watch = WatchFolders(store)
+    watch.add(owner, str(root), [])
+    watch.tick()
+    assert watch.list(owner)[0]['files'][0]['error'] == detail
+    assert store.records(owner, 'document') == []
+
+
 def test_pdf_upload_and_watch_share_two_worker_slots(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier, Event, Lock
@@ -738,3 +876,16 @@ def test_standalone_cancellation_applies_beyond_initial_coverage(tmp_path):
     assert planner.checked_until(owner) == cutoff
     proposal = planner.propose(owner,'Available','2040-01-01T10:00:00Z','2040-01-01T12:00:00Z',30)
     assert proposal['start'] == '2040-01-01T10:00:00+00:00'
+
+def test_task_plan_priorities_conflicts_and_atomic_approval(tmp_path):
+    store, owner, other = setup(tmp_path)
+    planner = Planning(store)
+    planner.import_ics(owner,ICS)
+    tasks = [{'title':'Low','minutes':60,'priority':0},{'title':'High','minutes':30,'priority':8}]
+    proposal = planner.propose_tasks(owner,'2027-01-01T09:00:00Z','2027-01-01T13:00:00Z',tasks)
+    assert [(block['title'],block['start'][11:16]) for block in proposal['blocks']] == [('High','09:00'),('Low','11:00')]
+    with pytest.raises(HTTPException):
+        planner.approve(other,proposal['id'])
+    planner.approve(owner,proposal['id'])
+    planner.approve(owner,proposal['id'])
+    assert len(planner.events(owner)) == 3

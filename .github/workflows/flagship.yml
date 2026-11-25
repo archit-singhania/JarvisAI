@@ -49,6 +49,10 @@ jobs:
           if($taskRender.ExitCode -ne 0){throw 'WPF render acceptance failed'}
           $taskAudio = Start-Process -FilePath $taskBinary -ArgumentList "--audio-check=$PWD/fixtures/audio" -WindowStyle Hidden -Wait -PassThru
           if($taskAudio.ExitCode -ne 0){throw 'Native audio acceptance failed'}
+          $env:WEDNESDAY_ACCEPTANCE_MODE = '1'
+          $env:WEDNESDAY_CLIENT_DATA = Join-Path $env:RUNNER_TEMP ('native-fixture-' + [guid]::NewGuid().ToString('N'))
+          $expansion = Start-Process -FilePath $taskBinary -ArgumentList "--expansion-check=$PWD/test-results/wpf-expansion.json" -WindowStyle Hidden -Wait -PassThru
+          if($expansion.ExitCode -ne 0){throw 'Native expansion acceptance failed'}
       - uses: actions/setup-node@v4
         with: {node-version: '22', cache: npm, cache-dependency-path: aurascript/package-lock.json}
       - run: npm ci

@@ -1,4 +1,4 @@
-"""Explicit redacted local retrieval cases. Never invokes a model or tool."""
+"""Read-only local evaluations for explicitly selected, redacted inputs."""
 import hashlib
 import json
 import time
@@ -7,6 +7,7 @@ import ast
 import asyncio
 from uuid import uuid4
 from app.workspace import timestamp
+from app.planning import instant
 
 
 class Evaluations:
@@ -82,7 +83,29 @@ class Evaluations:
             diagnostic=None
             try:ast.parse(case['query'])
             except SyntaxError as error:diagnostic={'line':error.lineno,'message':error.msg}
-            result.update(formula_version='python-diagnostics-v1',passed=bool(diagnostic)==case.get('expect_error',False),diagnostic=diagnostic,coverage='Python syntax diagnostic correctness; code is parsed, never executed.')
+            expected_line = case.get('expected_line')
+            matches_error = bool(diagnostic) == case.get('expect_error', False)
+            matches_line = expected_line is None or bool(diagnostic and diagnostic['line'] == expected_line)
+            result.update(
+                formula_version='python-diagnostics-v2',
+                passed=matches_error and matches_line,
+                diagnostic=diagnostic,
+                expected_line=expected_line,
+                coverage='Python syntax error detection and optional line matching; code is parsed, never executed.',
+            )
+        if kind == 'calendar_timezone':
+            try:
+                actual = instant(case['query']).isoformat()
+            except (ValueError, OverflowError):
+                actual = None
+            expected_utc = None if case.get('expect_error') else case['expected_utc'].replace('Z', '+00:00')
+            result.update(
+                formula_version='calendar-timezone-v1',
+                passed=actual == expected_utc,
+                expected_utc=expected_utc,
+                actual_utc=actual,
+                coverage='Calendar timestamp validation and UTC normalization only. No calendar events are read or written.',
+            )
         async def cancellation_probe():
             from app.runtime import Runtime
             class Socket:

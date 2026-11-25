@@ -38,22 +38,57 @@ public sealed partial class ContinuityWindow
         var calendar=AcceptancePanel("Calendar");AcceptanceField(calendar,"Block title").Text="Native reviewed block";
         await AcceptanceClick(calendar,"Propose free block");await AcceptanceClick(calendar,"Approve displayed proposal");
         var events=await api("expansion/calendar",null,null);Require(events.GetProperty("events").GetArrayLength()==1,"Calendar approval failed: "+status.Text);
+        AcceptanceField(calendar,"Tasks: title | minutes | priority (0–10)").Text =
+            "Draft notes | 20 | 3\nRead brief | 30 | 8";
+        await AcceptanceClick(calendar,"Propose several tasks");
+        using var plan = JsonDocument.Parse(AcceptanceField(calendar,"Calendar and proposed changes").Text);
+        var blocks = plan.RootElement.GetProperty("blocks");
+        Require(blocks.GetArrayLength()==2 && Text(blocks[0],"title")=="Read brief",
+                "Native task plan did not respect priority");
+        await AcceptanceClick(calendar,"Approve displayed proposal");
+        await AcceptanceClick(calendar,"Approve displayed proposal");
+        events=await api("expansion/calendar",null,null);
+        Require(events.GetProperty("events").GetArrayLength()==3,"Task plan approval duplicated or lost blocks");
         var sources=await api("search?q=native-violet-source",null,null);var source=Text(sources.GetProperty("sources")[0],"id");
         var evaluations=AcceptancePanel("Evaluations");AcceptanceField(evaluations,"Case title").Text="Native retrieval fixture";AcceptanceField(evaluations,"Redacted query").Text="native-violet-source";AcceptanceField(evaluations,"Expected owned source IDs, one per line").Text=source;
         await AcceptanceClick(evaluations,"Save reviewed case");var result=JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text).RootElement;
         AcceptanceField(evaluations,"Case ID to run/delete").Text=Text(result,"id");await AcceptanceClick(evaluations,"Run read-only case");
         var report=JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text).RootElement;Require(report.GetProperty("passed").GetBoolean(),"Native evaluation failed");
+        var kind = evaluations.Children.OfType<ComboBox>().Single(control =>
+            AutomationProperties.GetName(control) == "Evaluation check");
+        kind.SelectedItem = "calendar_timezone";
+        AcceptanceField(evaluations,"Case title").Text = "Native calendar fixture";
+        AcceptanceField(evaluations,"Redacted query").Text = "2027-11-07T01:30:00-05:00";
+        AcceptanceField(evaluations,"Expected UTC timestamp (calendar only)").Text = "2027-11-07T06:30:00Z";
+        AcceptanceField(evaluations,"Expected owned source IDs, one per line").Clear();
+        await AcceptanceClick(evaluations,"Save reviewed case");
+        kind.SelectedItem = "python_diagnostics";
+        AcceptanceField(evaluations,"Case title").Text = "Native Python mismatch";
+        AcceptanceField(evaluations,"Redacted query").Text = "x = 1\ndef broken(:";
+        AcceptanceField(evaluations,"Expected UTC timestamp (calendar only)").Clear();
+        AcceptanceField(evaluations,"Expected error line (Python only, optional)").Text = "3";
+        evaluations.Children.OfType<CheckBox>().Single(control =>
+            Equals(control.Content, "Expect invalid input")).IsChecked = true;
+        await AcceptanceClick(evaluations,"Save reviewed case");
         await AcceptanceClick(evaluations,"Run saved evaluation suite");
         using var suite = JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text);
-        Require(suite.RootElement.GetProperty("passed").GetInt32()==1 &&
-                suite.RootElement.GetProperty("failed").GetInt32()==0,"Native evaluation suite failed");
+        Require(suite.RootElement.GetProperty("passed").GetInt32()==2 &&
+                suite.RootElement.GetProperty("failed").GetInt32()==1,"Native evaluation suite failed");
+        var runs = suite.RootElement.GetProperty("runs").EnumerateArray().ToArray();
+        var syntax = runs.Single(run => Text(run,"formula_version") == "python-diagnostics-v2");
+        Require(syntax.GetProperty("diagnostic").GetProperty("line").GetInt32() == 2 &&
+                syntax.GetProperty("expected_line").GetInt32() == 3 &&
+                !syntax.GetProperty("passed").GetBoolean(), "Native diagnostic mismatch was lost");
+        var timezone = runs.Single(run => Text(run,"formula_version") == "calendar-timezone-v1");
+        Require(Text(timezone,"actual_utc") == "2027-11-07T06:30:00+00:00",
+                "Native calendar normalization failed");
         var announcement = evaluations.Children.OfType<TextBlock>().SingleOrDefault(
             control => AutomationProperties.GetLiveSetting(control) == AutomationLiveSetting.Polite);
-        Require(announcement?.Text == "Evaluation suite finished. 1 passed, 0 failed.",
+        Require(announcement?.Text == "Evaluation suite finished. 2 passed, 1 failed.",
                 "Evaluation suite completion announcement missing");
         await AcceptanceClick(AcceptancePanel("Watched folders"),"Refresh scan status");
         Require(AcceptanceField(AcceptancePanel("Watched folders"),"Index status and per-file failures").Text.Contains("folders"),"Native folder status failed");
-        return new{passed=true,queue=true,duplicatePrevention=true,calendar=true,evaluation=true,folderStatus=true,visualInspection=false};
+        return new{passed=true,queue=true,duplicatePrevention=true,calendar=true,taskPlan=true,evaluation=true,folderStatus=true,visualInspection=false};
     }
     public async Task<object> VerifyContinuityAsync()
     {

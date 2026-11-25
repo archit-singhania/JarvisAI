@@ -24,6 +24,10 @@ For wake word, install openwakeword/PyAudio/ONNX prerequisites and explicitly pl
 
 Back up the SQLite workspace with Python's `sqlite3.Connection.backup` while the service is running, or stop the service and preserve the database/WAL together. Keep backups private. The client session credential is needed to restore its identity; it is deliberately excluded from portfolio bundles. Old legacy memory/vector files remain preserved and are not automatically assigned to new unrelated sessions. Import useful legacy content explicitly through the authenticated document/memory APIs.
 
+For a manual Windows update, verify the ZIP against its `.sha256` file using `Get-FileHash`. Stop the client and backend, then back up the full private data and client directories, including referenced audio files. Preserve the existing package and extract the new one to a separate directory. Start it with the intended data and client paths and verify the saved workspace before resuming normal use.
+
+For rollback, stop the updated processes and restore the compatible pre-update backup to a fresh location. Start the previous package against that restored copy. Keep the updated data available for recovery because the previous snapshot excludes changes made after backup. Windows rehearsals verified both package hashes and restored the original session, records, appearance preferences, WPF layout and an uploaded synthetic WAV. The preference and layout checks read back stored settings through the packaged API. Verify that your desktop client displays the restored settings before resuming normal use.
+
 ## Build dependencies
 
 Use `npm ci` and `npm run prepare:editor` under `aurascript`. If npm's install-script approval configuration blocks Electron's official download, run `node node_modules/electron/install.js` in that directory after reviewing it. The maintained build compiles offline Monaco and language workers from locked ESM sources, including the patched DOMPurify override. It does not fetch scripts from a CDN at runtime.

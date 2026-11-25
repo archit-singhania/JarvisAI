@@ -46,6 +46,8 @@ Save a deliberately redacted local query with expected owned source IDs, or a Py
 
 Reports include case hashes, formula/configuration versions, source hashes, elapsed time, failures and a synthetic waiting-task probe through the real `Runtime.interrupt` method. That probe does **not** establish cloud-provider or audio-queue cancellation performance. No model requests, host commands or external writes are replayed. Subjective/model-graded evaluation, richer tool adapters, latency distributions and configuration comparison charts remain open.
 
+November 23: Browser and WPF cases can specify the expected line of a Python syntax error. A matching error on the wrong line fails the evaluation. Older cases still check only whether a syntax error occurred. WPF now also exposes the existing calendar timestamp evaluation. The expansion suite passed 42 tests with one platform-specific skip, and WPF built with zero warnings or errors.
+
 ## Evidence and release gaps
 
 The final backend regression run passed 52 tests. WPF Debug build passed with zero warnings/errors. An Edge journey verified offline save/reconnect/reload, local calendar approval, evaluation execution and a 390px layout without horizontal overflow or JavaScript errors. Google tests use mocked responses, not a live account. Existing test tooling emits a Starlette/httpx deprecation warning.
@@ -62,6 +64,16 @@ Package: `release/Wednesday-win-x64-20261118-044338.zip`. No live Google account
 
 The browser and Windows clients support Google sign-in. Mocked checks cover callback replay, cancellation, partial grants, encrypted storage and revocation. A live Google account and registered OAuth client are still required for provider acceptance.
 
-PDF uploads and watched folders use a shared subprocess with two parser slots per backend process, a 384 MiB memory limit and a 10-second execution timeout. Python-level filesystem and network restrictions are verified. OS-level filesystem isolation remains open.
+PDF uploads and watched folders use a shared subprocess with two parser slots per backend process, a 384 MiB memory limit and a 10-second execution timeout. On x64 and ARM64 Linux with Landlock enabled, the worker denies new filesystem reads, writes and execution before parsing document bytes. Kernel ABI 3 or later also denies standalone truncation. The worker retains the Python audit restrictions on all builds. Windows, macOS and Linux kernels without Landlock still rely on the subprocess and Python-level restrictions for filesystem access.
+
+Set `WEDNESDAY_REQUIRE_PDF_LANDLOCK=1` on a deployment that requires kernel filesystem enforcement. PDF uploads and watched-folder extraction fail before parsing when Landlock is unavailable. Other workspace operations continue.
+
+The PDF upload API reports unavailable isolation as HTTP 503, and watched folders show the same cause in their file status. The Windows strict-mode worker returned the expected refusal in a subprocess check. An integration test verifies neither path indexes a rejected PDF. The expansion suite passed 43 tests with one Linux-only check skipped on Windows.
+
+The updated Edge acceptance ran a three-case suite through the browser. The downloaded report recorded two passes and one deliberate failure: Python reported line 2 while the saved expectation was line 3. It also verified the calendar UTC case, keyboard activation, report focus restoration and a 390px layout. The fixture server used an explicitly allowed loopback origin.
+
+A fresh Windows WPF build passed the same evaluation cases through the native controls, including the calendar UTC result, Python line mismatch and completion live-region text. Windows CI now runs the isolated expansion check and uploads its receipt. Actual screen-reader speech remains unverified.
+
+The full backend suite passed 87 tests on Windows, with the Linux-only Landlock probe skipped. The Google fixture verified that an ambiguous write is recovered by its deterministic event ID, an unreviewed title change is refused, and retry does not create a second event. Live consent and writes still require an authorized Google test account.
 
 Edge verified phone-width keyboard navigation, evaluation focus and connection status semantics. Windows acceptance verified evaluation completion text and its live-region setting. Actual screen-reader speech remains unverified. Local HTTP measurements for 20 distinct queries across four concurrent workspaces reached a 706 ms median, with an 859 ms maximum. The Windows ZIP above is historical and predates these changes.
