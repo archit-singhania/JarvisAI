@@ -56,6 +56,9 @@ public sealed partial class ContinuityWindow
         var report=JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text).RootElement;Require(report.GetProperty("passed").GetBoolean(),"Native evaluation failed");
         var kind = evaluations.Children.OfType<ComboBox>().Single(control =>
             AutomationProperties.GetName(control) == "Evaluation check");
+        kind.SelectedItem = "retrieval_exact";
+        AcceptanceField(evaluations,"Case title").Text = "Native ranked retrieval fixture";
+        await AcceptanceClick(evaluations,"Save reviewed case");
         kind.SelectedItem = "calendar_timezone";
         AcceptanceField(evaluations,"Case title").Text = "Native calendar fixture";
         AcceptanceField(evaluations,"Redacted query").Text = "2027-11-07T01:30:00-05:00";
@@ -72,9 +75,13 @@ public sealed partial class ContinuityWindow
         await AcceptanceClick(evaluations,"Save reviewed case");
         await AcceptanceClick(evaluations,"Run saved evaluation suite");
         using var suite = JsonDocument.Parse(AcceptanceField(evaluations,"Cases and measurements").Text);
-        Require(suite.RootElement.GetProperty("passed").GetInt32()==2 &&
+        Require(suite.RootElement.GetProperty("passed").GetInt32()==3 &&
                 suite.RootElement.GetProperty("failed").GetInt32()==1,"Native evaluation suite failed");
         var runs = suite.RootElement.GetProperty("runs").EnumerateArray().ToArray();
+        var ranked = runs.Single(run => Text(run,"formula_version") == "local-retrieval-exact-v1");
+        Require(ranked.GetProperty("passed").GetBoolean() &&
+                ranked.GetProperty("actual_source_order").EnumerateArray().Select(item => item.GetString()).SequenceEqual(new[]{source}),
+                "Native ranked retrieval did not return the selected source");
         var syntax = runs.Single(run => Text(run,"formula_version") == "python-diagnostics-v2");
         Require(syntax.GetProperty("diagnostic").GetProperty("line").GetInt32() == 2 &&
                 syntax.GetProperty("expected_line").GetInt32() == 3 &&
@@ -84,11 +91,15 @@ public sealed partial class ContinuityWindow
                 "Native calendar normalization failed");
         var announcement = evaluations.Children.OfType<TextBlock>().SingleOrDefault(
             control => AutomationProperties.GetLiveSetting(control) == AutomationLiveSetting.Polite);
-        Require(announcement?.Text == "Evaluation suite finished. 2 passed, 1 failed.",
+        Require(announcement?.Text == "Evaluation suite finished. 3 passed, 1 failed.",
                 "Evaluation suite completion announcement missing");
+        var failureDetails = evaluations.Children.OfType<TextBlock>().Single(
+            control => AutomationProperties.GetName(control) == "Evaluation failure details");
+        Require(failureDetails.Text == "Expected Python error on line 3; observed 2.",
+                "Native evaluation failure details missing");
         await AcceptanceClick(AcceptancePanel("Watched folders"),"Refresh scan status");
         Require(AcceptanceField(AcceptancePanel("Watched folders"),"Index status and per-file failures").Text.Contains("folders"),"Native folder status failed");
-        return new{passed=true,queue=true,duplicatePrevention=true,calendar=true,taskPlan=true,evaluation=true,folderStatus=true,visualInspection=false};
+        return new{passed=true,queue=true,duplicatePrevention=true,calendar=true,taskPlan=true,evaluation=true,rankedRetrieval=true,folderStatus=true,visualInspection=false};
     }
     public async Task<object> VerifyContinuityAsync()
     {

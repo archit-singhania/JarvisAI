@@ -71,7 +71,7 @@ async function renderExpansion(panel,isCurrent){
   const folders=element('section','card');folders.append(intro('Watched documents','Select folders from the desktop client after explicitly configuring approved host roots. This browser only inspects status and can stop indexing. Scans run every 30 seconds.'));
   panel.append(folders);
   const evaluations=element('section','card');evaluations.append(intro('Local evaluation cases','Save a deliberately redacted query and expected owned source IDs. Runs measure source retrieval, Python syntax, or calendar timestamp normalization, latency and a labeled synthetic cancellation probe; no model calls or command execution.'));
-  evaluations.append(button('Save a reviewed evaluation',()=>editDialog('Review and redact this evaluation',[field('Title','title'),field('Check type','kind','text','retrieval',[['retrieval','Source retrieval'],['python_diagnostics','Python syntax diagnostics'],['calendar_timezone','Calendar timestamp normalization']]),field('Redacted query, Python code, or timestamp','query','textarea'),field('Expected source IDs, comma separated (retrieval only)','sources'),field('Expected UTC timestamp (calendar only)','expected_utc'),field('Expected error line (Python only, optional)','expected_line'),field('Expect invalid input','expect_error','text','false',[['false','No'],['true','Yes']])],body=>api('expansion/evaluations',json('POST',{title:body.title,query:body.query,kind:body.kind,expect_error:body.expect_error==='true',expected_utc:body.expected_utc.trim()||null,expected_line:body.expected_line.trim()||null,expected_sources:body.sources.split(',').map(v=>v.trim()).filter(Boolean),confirmed:true})))));
+  evaluations.append(button('Save a reviewed evaluation',()=>editDialog('Review and redact this evaluation',[field('Title','title'),field('Check type','kind','text','retrieval',[['retrieval','Source retrieval'],['retrieval_exact','Exact ranked retrieval'],['python_diagnostics','Python syntax diagnostics'],['calendar_timezone','Calendar timestamp normalization']]),field('Redacted query, Python code, or timestamp','query','textarea'),field('Expected source IDs, comma separated (ordered for exact retrieval)','sources'),field('Expected UTC timestamp (calendar only)','expected_utc'),field('Expected error line (Python only, optional)','expected_line'),field('Expect invalid input','expect_error','text','false',[['false','No'],['true','Yes']])],body=>api('expansion/evaluations',json('POST',{title:body.title,query:body.query,kind:body.kind,expect_error:body.expect_error==='true',expected_utc:body.expected_utc.trim()||null,expected_line:body.expected_line.trim()||null,expected_sources:body.sources.split(',').map(v=>v.trim()).filter(Boolean),confirmed:true})))));
   const suiteStatus = element('p');
   suiteStatus.setAttribute('role', 'status');
   const runSuite = button('Run saved evaluation suite', async () => {
@@ -102,6 +102,23 @@ async function renderExpansion(panel,isCurrent){
       [button('Download suite report', () => localDownload('evaluation-suite.json', JSON.stringify(summary, null, 2))),
        button('Close results', () => dialog.close())]
     ));
+    const failedRuns = summary.runs.filter(result => !result.passed);
+    if (failedRuns.length) {
+      const reasons = element('ul', '');
+      reasons.setAttribute('aria-label', 'Evaluation failure details');
+      for (const result of failedRuns) {
+        const probe = result.cancellation_probe;
+        let reason = probe?.failure;
+        if (!reason && probe?.passed === false) {
+          reason = 'Realtime interruption or event order differed from the expected sequence.';
+        }
+        if (!reason && result.expected_line != null) {
+          reason = `Expected Python error on line ${result.expected_line}; observed ${result.diagnostic?.line ?? 'no error'}.`;
+        }
+        reasons.append(element('li', '', reason || 'The result did not match the saved expectation.'));
+      }
+      dialog.append(reasons);
+    }
     dialog.addEventListener('close', () => {
       dialog.remove();
       if (isCurrent()) runSuite.focus();

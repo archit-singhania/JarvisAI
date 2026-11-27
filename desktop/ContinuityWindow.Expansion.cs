@@ -97,7 +97,7 @@ public sealed partial class ContinuityWindow
     private StackPanel LocalEvaluations()
     {
         var p=Panel("Reproducible source checks","Redact inputs before saving. Checks cover source retrieval, Python syntax and calendar timestamps, alongside a synthetic cancellation probe. No commands, external writes or model calls.");
-        var kind=Choice(p,"Evaluation check","retrieval","python_diagnostics","calendar_timezone");var expectError=Check(p,"Expect invalid input");
+        var kind=Choice(p,"Evaluation check","retrieval","retrieval_exact","python_diagnostics","calendar_timezone");var expectError=Check(p,"Expect invalid input");
         var expectedUtc=Field(p,"Expected UTC timestamp (calendar only)");
         var expectedLine=Field(p,"Expected error line (Python only, optional)");
         TextBox title=Field(p,"Case title"),query=Field(p,"Redacted query","",true),sources=Field(p,"Expected owned source IDs, one per line","",true),id=Field(p,"Case ID to run/delete"),output=Field(p,"Cases and measurements","",true);output.IsReadOnly=true;
@@ -114,6 +114,8 @@ public sealed partial class ContinuityWindow
                 ShowJson(output,await api("expansion/evaluations",HttpMethod.Post,new{title=title.Text,query=query.Text,kind=kind.SelectedItem?.ToString(),expect_error=expectError.IsChecked==true,expected_sources=Lines(sources.Text),expected_line=line,expected_utc=string.IsNullOrWhiteSpace(expectedUtc.Text)?null:expectedUtc.Text.Trim(),confirmed=true}));
         });
         var suiteStatus = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
+        var failures = new TextBlock { TextWrapping = System.Windows.TextWrapping.Wrap };
+        AutomationProperties.SetName(failures, "Evaluation failure details");
         AutomationProperties.SetLiveSetting(suiteStatus, AutomationLiveSetting.Polite);
         void Announce(string message)
         {
@@ -122,10 +124,14 @@ public sealed partial class ContinuityWindow
         }
         Button(p,"Run saved evaluation suite",async()=>{
             Announce("Running saved evaluations.");
+            failures.Text = "";
             try
             {
                 var report = await api("expansion/evaluations/run-suite",HttpMethod.Post,null);
                 ShowJson(output,report);
+                failures.Text = string.Join(Environment.NewLine, report.GetProperty("runs").EnumerateArray()
+                    .Where(result => !result.GetProperty("passed").GetBoolean())
+                    .Select(EvaluationFailure));
                 Announce($"Evaluation suite finished. {Text(report,"passed")} passed, {Text(report,"failed")} failed.");
             }
             catch (Exception error)
@@ -135,8 +141,27 @@ public sealed partial class ContinuityWindow
             }
         });
         p.Children.Add(suiteStatus);
+        p.Children.Add(failures);
         Button(p,"Run read-only case",async()=>ShowJson(output,await api("expansion/evaluations/"+Uri.EscapeDataString(id.Text)+"/run",HttpMethod.Post,null)));
         Button(p,"Export displayed results",()=>{SaveText("wednesday-evaluation.json",output.Text);return Task.CompletedTask;});
         Button(p,"Delete case and results",async()=>{if(Confirm("Delete this case and its recorded runs?"))ShowJson(output,await api("expansion/evaluations/"+Uri.EscapeDataString(id.Text),HttpMethod.Delete,null));});return p;
+    }
+
+    private static string EvaluationFailure(JsonElement result)
+    {
+        if (result.TryGetProperty("cancellation_probe", out var probe))
+        {
+            if (probe.TryGetProperty("failure", out var failure) && failure.ValueKind == JsonValueKind.String)
+                return failure.GetString()!;
+            if (probe.TryGetProperty("passed", out var passed) && passed.ValueKind == JsonValueKind.False)
+                return "Realtime interruption or event order differed from the expected sequence.";
+        }
+        if (result.TryGetProperty("expected_line", out var expected) && expected.ValueKind == JsonValueKind.Number)
+        {
+            var observed = result.TryGetProperty("diagnostic", out var diagnostic) &&
+                diagnostic.ValueKind == JsonValueKind.Object ? Text(diagnostic, "line") : "no error";
+            return $"Expected Python error on line {expected}; observed {observed}.";
+        }
+        return "The result did not match the saved expectation.";
     }
 }

@@ -1,13 +1,29 @@
 """Bounded document indexing inside operator-approved roots only."""
 import fnmatch
 import hashlib
-from app.extract_pdf import PDFIsolationUnavailable, extract_document
+from app.extract_pdf import PDFExtractionTimedOut, PDFIsolationUnavailable, extract_document
 import stat
 import json
 import os
 from pathlib import Path
 from uuid import uuid4
 from app.workspace import timestamp
+
+
+def open_watch_file(path, flags):
+    """Open without following links in any component on dirfd-capable hosts."""
+    if os.open not in os.supports_dir_fd or not getattr(os, 'O_NOFOLLOW', 0):
+        return os.open(path, flags)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent = os.open(path.anchor, directory_flags)
+    try:
+        for part in path.parts[1:-1]:
+            child = os.open(part, directory_flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        return os.open(path.name, flags, dir_fd=parent)
+    finally:
+        os.close(parent)
 
 
 class WatchFolders:
@@ -64,6 +80,10 @@ class WatchFolders:
                 if visited>2000: raise ValueError('Folder exceeds the 2000-file scan budget; narrow the approved root')
                 path=Path(parent,name); rel=path.relative_to(root).as_posix()
                 if path.suffix.lower() not in ('.txt','.md','.pdf') or any(fnmatch.fnmatch(rel,p) for p in excludes): continue
+                with self.store.db() as db:
+                    if not db.execute('SELECT 1 FROM watched_folders WHERE id=? AND owner=?',
+                                      (folder['id'], folder['owner'])).fetchone():
+                        return
                 if path.is_symlink() or any(p.is_symlink() for p in path.parents) or not path.resolve().is_relative_to(root): continue
                 error=None; content=''; digest=''
                 try:
@@ -73,7 +93,7 @@ class WatchFolders:
                     if before.st_size > 4*1024*1024:
                         raise ValueError('File exceeds 4 MiB')
                     flags = os.O_RDONLY | getattr(os,'O_NOFOLLOW',0) | getattr(os,'O_NONBLOCK',0) | getattr(os,'O_BINARY',0)
-                    with os.fdopen(os.open(path,flags),'rb') as source:
+                    with os.fdopen(open_watch_file(path,flags),'rb') as source:
                         opened = os.fstat(source.fileno())
                         if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(before,opened):
                             raise ValueError('File changed before opening')
@@ -98,6 +118,9 @@ class WatchFolders:
                     if len(content)>200000: raise ValueError('Extracted text exceeds 200000 characters')
                 except OverflowError:
                     raise
+                except PDFExtractionTimedOut as exc:
+                    error = str(exc)
+                    content = ''
                 except TimeoutError:
                     error = 'PDF workers are busy; extraction will retry on the next scan'
                     content = ''

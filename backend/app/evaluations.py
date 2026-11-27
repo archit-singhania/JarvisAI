@@ -5,9 +5,12 @@ import time
 from statistics import median
 import ast
 import asyncio
+from contextlib import suppress
 from uuid import uuid4
 from app.workspace import timestamp
 from app.planning import instant
+
+RETRIEVAL_KINDS = {'retrieval', 'retrieval_exact'}
 
 
 class Evaluations:
@@ -38,7 +41,7 @@ class Evaluations:
             raise ValueError('Save at least one evaluation case first')
         if len(cases) > 100:
             raise ValueError('Suite runs support up to 100 saved cases')
-        needs_sources = any(json.loads(case['value']).get('kind','retrieval') == 'retrieval' for case in cases)
+        needs_sources = any(json.loads(case['value']).get('kind','retrieval') in RETRIEVAL_KINDS for case in cases)
         records = self.store.records(owner) if needs_sources else []
         retrieval_cache = {}
         chunk_tokens = {}
@@ -66,7 +69,7 @@ class Evaluations:
         kind=case.get('kind','retrieval')
         sources = []
         reused = False
-        if kind == 'retrieval':
+        if kind in RETRIEVAL_KINDS:
             query = case['query']
             if retrieval_cache is None:
                 sources = self.store.retrieve(owner, query)
@@ -79,6 +82,17 @@ class Evaluations:
         expected=set(case['expected_sources'])
         result={'case_id':identity,'formula_version':'local-retrieval-v1','case_sha256':hashlib.sha256(row['value'].encode()).hexdigest(),'provider':'local','model':None,'latency_ms':round((time.perf_counter()-started)*1000,3),'passed':expected.issubset(found),'missing_sources':sorted(expected-found),'sources':[{'id':r['id'],'sha256':hashlib.sha256(json.dumps(r,sort_keys=True).encode()).hexdigest()} for r in sources],'coverage':'Local retrieval source availability only; tool correctness, model quality and cancellation are not measured.'}
         result['retrieval_reused'] = reused
+        if kind == 'retrieval_exact':
+            actual_order = list(dict.fromkeys(source['id'] for source in sources))
+            expected_order = case['expected_sources']
+            result.update(
+                formula_version='local-retrieval-exact-v1',
+                passed=actual_order == expected_order,
+                actual_source_order=actual_order,
+                expected_source_order=expected_order,
+                unexpected_sources=sorted(found - expected),
+                coverage='Exact ranked local source IDs, deduplicated in retrieval order. Does not evaluate generated claims.',
+            )
         if kind=='python_diagnostics':
             diagnostic=None
             try:ast.parse(case['query'])
@@ -111,12 +125,54 @@ class Evaluations:
             class Socket:
                 def __init__(self):self.events=[]
                 async def send_json(self,event):self.events.append(event)
-            socket=Socket();runtime=Runtime(socket,self.store,owner,'evaluation-fixture')
-            runtime.task=asyncio.create_task(asyncio.Event().wait())
-            await asyncio.sleep(0)
-            begin=time.perf_counter()
-            await asyncio.wait_for(runtime.interrupt(),timeout=1)
-            return {'passed':runtime.task.cancelled() and socket.events[-1]['type']=='interrupted','latency_ms':round((time.perf_counter()-begin)*1000,3),'scope':'Synthetic waiting task through the real Runtime.interrupt method; does not certify provider or audio cancellation.'}
+            socket = Socket()
+            runtime = Runtime(socket, self.store, owner, 'evaluation-fixture')
+            runtime.turn_id = 'evaluation-turn'
+            started_streaming = asyncio.Event()
+
+            async def fixture_turn():
+                await runtime.send('stream_start')
+                await runtime.send('stream_chunk', content='Fixture')
+                started_streaming.set()
+                await asyncio.Event().wait()
+
+            runtime.task = asyncio.create_task(fixture_turn())
+            latency = None
+            failure = None
+            stage = 'stream startup'
+            try:
+                await asyncio.wait_for(started_streaming.wait(), timeout=1)
+                stage = 'interruption'
+                begin = time.perf_counter()
+                await asyncio.wait_for(runtime.interrupt(), timeout=1)
+                latency = round((time.perf_counter() - begin) * 1000, 3)
+                stage = 'post-interruption session update'
+                await asyncio.wait_for(runtime.send('context_updated'), timeout=1)
+            except TimeoutError:
+                failure = f'Timed out during {stage}'
+            finally:
+                if not runtime.task.done():
+                    runtime.task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await runtime.task
+            events = socket.events
+            types = [event['type'] for event in events]
+            sequences = [event['sequence'] for event in events]
+            ordered = (
+                types == ['stream_start', 'stream_chunk', 'interrupted', 'context_updated']
+                and sequences == [1, 2, 3, 4]
+                and [event['turn_id'] for event in events] == [runtime.turn_id, runtime.turn_id, None, None]
+                and all(event['session_id'] == runtime.session_id for event in events)
+            )
+            return {
+                'passed': failure is None and runtime.task.cancelled() and ordered,
+                'failure': failure,
+                'latency_ms': latency,
+                'event_types': types,
+                'event_sequences': sequences,
+                'ordered_events': ordered,
+                'scope': 'Synthetic stream through Runtime.send and Runtime.interrupt. Provider and audio cancellation are outside this probe.',
+            }
         result['cancellation_probe']=asyncio.run(cancellation_probe())
         result['configuration']={'retrieval_limit':3,'kind':kind,'runtime':'python','external_calls':False}
         result['latency_ms']=round((time.perf_counter()-started)*1000,3)

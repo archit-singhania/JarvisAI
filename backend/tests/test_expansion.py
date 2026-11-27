@@ -89,6 +89,77 @@ def test_watch_changed_deleted_excluded_and_root_revocation(tmp_path,monkeypatch
     with pytest.raises(KeyError):service.remove(b,folder['id'])
 
 
+def test_watch_open_rejects_swapped_parent_directory(tmp_path):
+    import os
+    from app.watchfolders import open_watch_file
+
+    if os.open not in os.supports_dir_fd or not hasattr(os, 'O_NOFOLLOW'):
+        pytest.skip('Directory-handle no-follow opens are unavailable')
+    root = tmp_path.resolve()
+    approved = root / 'approved'
+    outside = root / 'outside'
+    approved.mkdir()
+    outside.mkdir()
+    (approved / 'note.txt').write_text('approved fixture')
+    (outside / 'note.txt').write_text('outside fixture')
+    target = approved / 'note.txt'
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    with os.fdopen(open_watch_file(target, flags)) as source:
+        assert source.read() == 'approved fixture'
+    approved.rename(root / 'old-approved')
+    approved.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        open_watch_file(target, flags)
+
+
+def test_evaluation_retains_timeout_and_continues_suite(tmp_path, monkeypatch):
+    import asyncio
+    from app.runtime import Runtime
+
+    store, owner, _ = setup(tmp_path)
+    service = Evaluations(store)
+    interrupt = Runtime.interrupt
+    attempts = 0
+
+    async def stall_once(runtime, announce=True):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await asyncio.Event().wait()
+        await interrupt(runtime, announce)
+
+    monkeypatch.setattr(Runtime, 'interrupt', stall_once)
+    for title in ('First', 'Second'):
+        service.save(owner, {
+            'title': title, 'query': 'x = 1',
+            'kind': 'python_diagnostics', 'expected_sources': [],
+        })
+    report = service.run_suite(owner)
+    assert (report['passed'], report['failed']) == (1, 1)
+    failed = next(run for run in service.list(owner)['runs'] if not run['value']['passed'])
+    probe = failed['value']['cancellation_probe']
+    assert probe['failure'] == 'Timed out during interruption'
+    assert probe['latency_ms'] is None
+    assert probe['event_types'] == ['stream_start', 'stream_chunk']
+
+
+def test_exact_retrieval_checks_order_and_unexpected_sources(tmp_path):
+    store, owner, _ = setup(tmp_path)
+    service = Evaluations(store)
+    first = store.save_record(owner, 'document', 'First', 'violet orange')
+    second = store.save_record(owner, 'document', 'Second', 'violet')
+    for expected in ([first, second], [second, first], [first]):
+        service.save(owner, {
+            'title': 'Ranked sources', 'query': 'violet orange',
+            'kind': 'retrieval_exact', 'expected_sources': expected,
+        })
+    report = service.run_suite(owner)
+    assert report['passed'] == 1
+    assert report['reused_retrievals'] == 2
+    assert all(run['actual_source_order'] == [first, second] for run in report['runs'])
+    assert any(run['unexpected_sources'] == [second] for run in report['runs'])
+
+
 def test_evaluations_detect_missing_sources_without_tools(tmp_path):
     store,a,b=setup(tmp_path); service=Evaluations(store)
     identity=store.save_record(a,'document','Evidence','violet source')
@@ -104,6 +175,11 @@ def test_evaluations_detect_missing_sources_without_tools(tmp_path):
     result=service.run(a,diagnostic['id'])
     assert result['passed'] and result['diagnostic']['line']==1
     assert result['cancellation_probe']['passed']
+    assert result['cancellation_probe']['ordered_events']
+    assert result['cancellation_probe']['event_sequences'] == [1, 2, 3, 4]
+    assert result['cancellation_probe']['event_types'] == [
+        'stream_start', 'stream_chunk', 'interrupted', 'context_updated',
+    ]
     for expected_line in (2, 3):
         located = service.save(a, {
             'title': 'Syntax location', 'kind': 'python_diagnostics',
@@ -522,8 +598,40 @@ def test_legacy_recurrence_source_is_minimized_on_reopen(tmp_path):
     proposal = reopened.propose(owner, 'Later','2040-01-01T10:00:00Z','2040-01-01T12:00:00Z',30)
     assert proposal['start'] == '2040-01-01T11:00:00+00:00'
 
-def test_watch_pdf_worker_indexes_valid_document_after_malformed_input(tmp_path, monkeypatch):
+def test_removed_folder_stops_before_extracting_next_file(tmp_path, monkeypatch):
+    from app import watchfolders
+
+    store, owner, _ = setup(tmp_path)
+    root = tmp_path / 'removed-during-scan'
+    root.mkdir()
+    for name in ('one.pdf', 'two.pdf'):
+        (root / name).write_bytes(b'fixture')
+    monkeypatch.setenv('WEDNESDAY_WATCH_ROOTS', str(root))
+    monkeypatch.setenv('WEDNESDAY_WATCH_OWNER', owner)
+    watch = WatchFolders(store)
+    identity = watch.add(owner, str(root), [])['id']
+    attempts = []
+
+    def remove_during_extraction(data):
+        attempts.append(data)
+        watch.remove(owner, identity)
+        return 'This result must never be indexed'
+
+    monkeypatch.setattr(watchfolders, 'extract_document', remove_during_extraction)
+    watch.tick()
+    assert attempts == [b'fixture']
+    assert watch.list(owner) == []
+    assert store.records(owner, 'document') == []
+
+
+def test_pdf_worker_indexes_valid_document_through_watch_and_upload(tmp_path, monkeypatch):
+    import sys
+    from fastapi.testclient import TestClient
     from pypdf import PdfWriter
+    from app import main
+
+    if sys.platform == 'darwin':
+        monkeypatch.setenv('WEDNESDAY_REQUIRE_PDF_ISOLATION', '1')
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
     store, owner, _ = setup(tmp_path)
@@ -552,6 +660,15 @@ def test_watch_pdf_worker_indexes_valid_document_after_malformed_input(tmp_path,
     assert files['a-invalid.pdf']['error']
     assert files['b-valid.pdf']['error'] is None
     assert [source['title'] for source in store.retrieve(owner,'violet')] == ['b-valid.pdf']
+    monkeypatch.setattr(main, 'store', store)
+    with TestClient(main.app) as client:
+        assert client.post('/api/session').status_code == 200
+        uploaded = client.post('/api/documents', files={
+            'file': ('uploaded.pdf', (root/'b-valid.pdf').read_bytes(), 'application/pdf'),
+        })
+        assert uploaded.status_code == 200, uploaded.text
+        result = client.get('/api/search', params={'q': 'violet'})
+        assert [source['title'] for source in result.json()['sources']] == ['uploaded.pdf']
 
 def test_google_partial_consent_does_not_store_credentials(tmp_path, monkeypatch):
     import httpx
@@ -633,17 +750,22 @@ for label, action in [
     assert result.stdout.splitlines() == ['file read', 'file write', 'network socket', 'process launch']
     assert not fixture.with_suffix('.txt.new').exists()
 
-def test_linux_pdf_worker_rejects_native_file_access(tmp_path):
+@pytest.mark.parametrize('platform, policy', [
+    ('linux', 'restrict_linux_filesystem'),
+    ('darwin', 'restrict_macos_filesystem'),
+])
+def test_pdf_worker_rejects_native_file_access(tmp_path, platform, policy):
     import subprocess
     import sys
     from app import extract_pdf
 
-    if sys.platform != 'linux':
-        pytest.skip('Landlock applies to Linux workers')
+    if sys.platform != platform:
+        pytest.skip(f'{policy} applies to {platform} workers')
     fixture = tmp_path / 'private.txt'
     fixture.write_text('fixture')
     script = """
 import ctypes
+import errno
 import os
 import runpy
 import sys
@@ -651,30 +773,31 @@ worker = runpy.run_path(sys.argv[1])
 libc = ctypes.CDLL(None, use_errno=True)
 path = os.fsencode(sys.argv[2])
 assert libc.close(libc.open(path, os.O_RDONLY)) == 0
-if not worker['restrict_linux_filesystem']():
+if not worker[sys.argv[3]]():
     sys.exit(77)
 for flags in (os.O_RDONLY, os.O_WRONLY | os.O_TRUNC):
-    assert libc.open(path, flags) == -1 and ctypes.get_errno() == 13
+    assert libc.open(path, flags) == -1 and ctypes.get_errno() in (errno.EACCES, errno.EPERM)
 """
     result = subprocess.run([sys.executable, '-I', '-c', script,
-                             extract_pdf.__file__, str(fixture)],
+                             extract_pdf.__file__, str(fixture), policy],
                             capture_output=True, text=True, timeout=10)
-    if result.returncode == 77:
+    if result.returncode == 77 and platform == 'linux':
         pytest.skip('Landlock unavailable on this kernel')
     assert result.returncode == 0, result.stderr
     assert fixture.read_text() == 'fixture'
 
 
-def test_pdf_worker_forwards_strict_isolation_policy(monkeypatch):
+@pytest.mark.parametrize('policy', ['WEDNESDAY_REQUIRE_PDF_LANDLOCK', 'WEDNESDAY_REQUIRE_PDF_ISOLATION'])
+def test_pdf_worker_forwards_strict_isolation_policy(monkeypatch, policy):
     from subprocess import CalledProcessError
     from types import SimpleNamespace
     from app import extract_pdf
 
-    monkeypatch.setenv('WEDNESDAY_REQUIRE_PDF_LANDLOCK', '1')
+    monkeypatch.setenv(policy, '1')
     monkeypatch.setenv('WEDNESDAY_TEST_PRIVATE_TOKEN', 'fixture')
 
     def worker(*args, **kwargs):
-        assert kwargs['env']['WEDNESDAY_REQUIRE_PDF_LANDLOCK'] == '1'
+        assert kwargs['env'][policy] == '1'
         assert 'WEDNESDAY_TEST_PRIVATE_TOKEN' not in kwargs['env']
         return SimpleNamespace(stdout=b'fixture')
 
@@ -689,7 +812,31 @@ def test_pdf_worker_forwards_strict_isolation_policy(monkeypatch):
         extract_pdf.extract_document(b'fixture', upload=True)
 
 
-def test_pdf_isolation_failure_does_not_index_upload_or_watched_file(tmp_path, monkeypatch):
+def test_upload_reports_parser_deadline_separately_from_busy_queue(tmp_path, monkeypatch):
+    from subprocess import TimeoutExpired
+    from fastapi.testclient import TestClient
+    from app import extract_pdf, main
+
+    store, _, _ = setup(tmp_path)
+    monkeypatch.setattr(main, 'store', store)
+
+    def timeout(command, **kwargs):
+        raise TimeoutExpired(command, kwargs['timeout'])
+
+    monkeypatch.setattr(extract_pdf.subprocess, 'run', timeout)
+    with TestClient(main.app) as client:
+        assert client.post('/api/session').status_code == 200
+        response = client.post('/api/documents', files={
+            'file': ('note.pdf', b'fixture', 'application/pdf'),
+        })
+        assert response.status_code == 422
+        assert response.json()['detail'] == 'PDF extraction exceeded the 10-second limit.'
+        assert client.get('/api/documents').json()['documents'] == []
+
+
+@pytest.mark.parametrize('real_windows_worker', [False, True], ids=['simulated', 'windows-worker'])
+def test_pdf_isolation_failure_does_not_index_upload_or_watched_file(tmp_path, monkeypatch, real_windows_worker):
+    import sys
     from subprocess import CalledProcessError
     from fastapi.testclient import TestClient
     from app import extract_pdf, main
@@ -700,7 +847,13 @@ def test_pdf_isolation_failure_does_not_index_upload_or_watched_file(tmp_path, m
     def refuse(*args, **kwargs):
         raise CalledProcessError(extract_pdf.ISOLATION_UNAVAILABLE_EXIT, args[0])
 
-    monkeypatch.setattr(extract_pdf.subprocess, 'run', refuse)
+    if real_windows_worker:
+        if sys.platform != 'win32':
+            pytest.skip('Requires a Windows worker without native PDF isolation')
+        monkeypatch.delenv('WEDNESDAY_REQUIRE_PDF_LANDLOCK', raising=False)
+        monkeypatch.setenv('WEDNESDAY_REQUIRE_PDF_ISOLATION', '1')
+    else:
+        monkeypatch.setattr(extract_pdf.subprocess, 'run', refuse)
     with TestClient(main.app) as client:
         client.post('/api/session')
         result = client.post('/api/documents', files={'file': ('note.pdf', b'fixture', 'application/pdf')})

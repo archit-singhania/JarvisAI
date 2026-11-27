@@ -273,7 +273,7 @@ def documents(identity=Depends(owner)):
 
 @app.post('/api/documents')
 async def upload_document(file: UploadFile,identity=Depends(owner)):
-    from app.extract_pdf import PDFIsolationUnavailable, extract_document
+    from app.extract_pdf import PDFExtractionTimedOut, PDFIsolationUnavailable, extract_document
     raw = await file.read(10*1024*1024+1)
     if len(raw)>10*1024*1024:
         raise HTTPException(413,'Document exceeds 10 MB')
@@ -287,6 +287,8 @@ async def upload_document(file: UploadFile,identity=Depends(owner)):
             raise HTTPException(415,'Upload PDF, UTF-8 text, Markdown, CSV, JSON, or a supported source file')
     except HTTPException:
         raise
+    except PDFExtractionTimedOut as error:
+        raise HTTPException(422, str(error)) from None
     except TimeoutError:
         raise HTTPException(503,'PDF workers are busy. Try again shortly.') from None
     except PDFIsolationUnavailable as error:

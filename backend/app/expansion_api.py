@@ -64,7 +64,7 @@ class Case(Approval):
     title: str=Field(min_length=1,max_length=200)
     query: str=Field(min_length=1,max_length=2000)
     expected_sources: list[str]=Field(default_factory=list,max_length=20)
-    kind: Literal['retrieval','python_diagnostics','calendar_timezone']='retrieval'
+    kind: Literal['retrieval','retrieval_exact','python_diagnostics','calendar_timezone']='retrieval'
     expect_error: bool=False
     expected_line: int | None=Field(default=None,ge=1,le=2000)
     expected_utc: str | None=Field(default=None,max_length=40)
@@ -74,6 +74,10 @@ class Case(Approval):
         if self.expected_line is not None and (self.kind != 'python_diagnostics' or not self.expect_error):
             raise ValueError('Expected line applies only to a Python syntax error')
         if self.kind=='retrieval' and not self.expected_sources:raise ValueError('Select expected sources for a retrieval case')
+        if self.kind == 'retrieval_exact' and (
+            len(self.expected_sources) > 3 or len(set(self.expected_sources)) != len(self.expected_sources)
+        ):
+            raise ValueError('Enter up to three distinct source IDs in the expected order')
         if self.kind == 'calendar_timezone' and not self.expect_error and not self.expected_utc:
             raise ValueError('Enter the expected UTC timestamp for a valid calendar input')
         return self

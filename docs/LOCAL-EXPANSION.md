@@ -64,11 +64,15 @@ Package: `release/Wednesday-win-x64-20261118-044338.zip`. No live Google account
 
 The browser and Windows clients support Google sign-in. Mocked checks cover callback replay, cancellation, partial grants, encrypted storage and revocation. A live Google account and registered OAuth client are still required for provider acceptance.
 
-PDF uploads and watched folders use a shared subprocess with two parser slots per backend process, a 384 MiB memory limit and a 10-second execution timeout. On x64 and ARM64 Linux with Landlock enabled, the worker denies new filesystem reads, writes and execution before parsing document bytes. Kernel ABI 3 or later also denies standalone truncation. The worker retains the Python audit restrictions on all builds. Windows, macOS and Linux kernels without Landlock still rely on the subprocess and Python-level restrictions for filesystem access.
+PDF uploads and watched folders use a shared subprocess with two parser slots per backend process, a 384 MiB memory limit and a 10-second execution timeout. On x64 and ARM64 Linux with Landlock enabled, the worker denies new filesystem reads, writes and execution before parsing document bytes. Kernel ABI 3 or later also denies standalone truncation. The worker retains Python audit restrictions on every platform.
 
-Set `WEDNESDAY_REQUIRE_PDF_LANDLOCK=1` on a deployment that requires kernel filesystem enforcement. PDF uploads and watched-folder extraction fail before parsing when Landlock is unavailable. Other workspace operations continue.
+Set `WEDNESDAY_REQUIRE_PDF_ISOLATION=1` in the backend process environment to require OS filesystem isolation. On Linux this requires Landlock. On macOS it enables a deny-all policy through the deprecated Seatbelt API, with native verification configured in CI. Windows workers refuse PDF extraction under this setting because native Windows filesystem isolation is pending. Uploads return HTTP 503 and watched folders show a per-file error when enforcement is unavailable.
+
+Set `WEDNESDAY_REQUIRE_PDF_LANDLOCK=1` to require Linux Landlock specifically. When both flags are set, the Landlock requirement takes precedence. Standard Windows and macOS mode uses subprocess resource limits and Python audit restrictions.
 
 The PDF upload API reports unavailable isolation as HTTP 503, and watched folders show the same cause in their file status. The Windows strict-mode worker returned the expected refusal in a subprocess check. An integration test verifies neither path indexes a rejected PDF. The expansion suite passed 43 tests with one Linux-only check skipped on Windows.
+
+On hosts that support directory-relative opens and `O_NOFOLLOW`, watched files now open through a chain of directory handles, rejecting symlinked parent components at open time. A Linux probe confirmed that a regular file opens and a symlinked parent is denied. Windows still uses the existing identity and containment checks.
 
 The updated Edge acceptance ran a three-case suite through the browser. The downloaded report recorded two passes and one deliberate failure: Python reported line 2 while the saved expectation was line 3. It also verified the calendar UTC case, keyboard activation, report focus restoration and a 390px layout. The fixture server used an explicitly allowed loopback origin.
 
@@ -77,3 +81,11 @@ A fresh Windows WPF build passed the same evaluation cases through the native co
 The full backend suite passed 87 tests on Windows, with the Linux-only Landlock probe skipped. The Google fixture verified that an ambiguous write is recovered by its deterministic event ID, an unreviewed title change is refused, and retry does not create a second event. Live consent and writes still require an authorized Google test account.
 
 Edge verified phone-width keyboard navigation, evaluation focus and connection status semantics. Windows acceptance verified evaluation completion text and its live-region setting. Actual screen-reader speech remains unverified. Local HTTP measurements for 20 distinct queries across four concurrent workspaces reached a 706 ms median, with an 859 ms maximum. The Windows ZIP above is historical and predates these changes.
+
+## November 26 Windows package acceptance
+
+The Windows ZIP `Wednesday-win-x64-20261126-072859.zip` passed SHA-256 verification and all 47 checked bundled source files matched the workspace. The packaged WPF app passed offline queue, duplicate prevention, calendar approval, multi-task planning, evaluations and watched-folder status against the API bundled in the release and an isolated local data directory. The initial sandboxed smoke stalled inside Python’s Windows asyncio loopback initialization before the API started. The same release passed when run with loopback access. The receipt records programmatic acceptance; visual inspection and screen-reader speech were outside that run.
+
+The subsequent Windows package `Wednesday-win-x64-20261126-075012.zip` passed SHA-256 verification. Its native expansion run also saved an exact ranked retrieval case through the desktop controls and checked the returned source order against the bundled API. The evaluation suite reported three passes and one deliberate Python diagnostic mismatch. This run did not include visual inspection or screen-reader speech.
+
+Edge also passed the ranked retrieval journey against an isolated API. The browser saved the case through the evaluation dialog, ran the four-case suite with keyboard activation, and verified the selected source order in the downloaded report. The run also verified focus restoration and a 390 px viewport without horizontal overflow or page errors. The same journey is now configured in the Linux flagship workflow with Chromium; hosted execution is pending.

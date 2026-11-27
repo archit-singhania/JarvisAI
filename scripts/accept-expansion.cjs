@@ -2,7 +2,7 @@
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({channel:'msedge',headless:true});
+ const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL||'msedge',headless:true});
  try{
   const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
@@ -52,6 +52,14 @@ const assert=require('node:assert/strict');
   await page.getByRole('button',{name:'Run read-only evaluation'}).click();
   await page.getByRole('heading',{name:'Evaluation passed'}).waitFor();
   await page.getByRole('button',{name:'Save a reviewed evaluation'}).click();
+  const rankedCase=page.getByRole('dialog');
+  await rankedCase.locator('#field-title').fill('Exact ranked source acceptance');
+  await rankedCase.locator('#field-kind').selectOption('retrieval_exact');
+  await rankedCase.locator('#field-query').fill('violet');
+  await rankedCase.locator('#field-sources').fill(source);
+  await rankedCase.getByRole('button',{name:'Save',exact:true}).click();
+  await page.getByRole('heading',{name:'Exact ranked source acceptance',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Save a reviewed evaluation'}).click();
   const calendarCase=page.getByRole('dialog');
   await calendarCase.locator('#field-title').fill('Calendar offset acceptance');
   await calendarCase.locator('#field-kind').selectOption('calendar_timezone');
@@ -71,15 +79,27 @@ const assert=require('node:assert/strict');
   const runSuite = page.getByRole('button',{name:'Run saved evaluation suite'});
   await runSuite.focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('heading',{name:'2 passed · 1 failed'}).waitFor();
+  await page.getByRole('heading',{name:'3 passed · 1 failed'}).waitFor();
   const dialog = page.getByRole('dialog',{name:'Evaluation suite results'});
+  await dialog.getByRole('list',{name:'Evaluation failure details'})
+    .getByText('Expected Python error on line 3; observed 2.',{exact:true}).waitFor();
   assert(await dialog.evaluate(node => document.activeElement.id === 'suite-results-heading'));
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.getByRole('button',{name:'Download suite report'}).click(),
   ]);
   const summary = JSON.parse(require('node:fs').readFileSync(await download.path(), 'utf8'));
-  assert.equal(summary.runs.length,3);
+  assert.equal(summary.runs.length,4);
+  for (const result of summary.runs) {
+    const probe = result.cancellation_probe;
+    assert.equal(probe.ordered_events, true);
+    assert.deepEqual(probe.event_sequences, [1, 2, 3, 4]);
+    assert.deepEqual(probe.event_types, ['stream_start', 'stream_chunk', 'interrupted', 'context_updated']);
+  }
+  const rankedResult=summary.runs.find(run=>run.formula_version==='local-retrieval-exact-v1');
+  assert.equal(rankedResult?.passed,true);
+  assert.deepEqual(rankedResult.actual_source_order,[source]);
+  assert.deepEqual(rankedResult.expected_source_order,[source]);
   const syntaxResult=summary.runs.find(run=>run.formula_version==='python-diagnostics-v2');
   assert.equal(syntaxResult?.diagnostic.line,2);
   assert.equal(syntaxResult.expected_line,3);

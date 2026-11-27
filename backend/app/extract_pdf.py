@@ -17,6 +17,10 @@ class PDFIsolationUnavailable(RuntimeError):
     """The configured filesystem isolation policy could not be applied."""
 
 
+class PDFExtractionTimedOut(TimeoutError):
+    """The active parser exceeded its execution deadline."""
+
+
 def limit_worker_memory():
     if os.name != 'nt':
         import resource
@@ -124,8 +128,11 @@ def extract_document(data, *, upload=False):
             timeout=10, check=True,
             env={key: os.environ[key] for key in (
                 'SystemRoot', 'TEMP', 'TMP', 'PATH', 'WEDNESDAY_REQUIRE_PDF_LANDLOCK',
+                'WEDNESDAY_REQUIRE_PDF_ISOLATION',
             ) if key in os.environ},
         )
+    except subprocess.TimeoutExpired:
+        raise PDFExtractionTimedOut('PDF extraction exceeded the 10-second limit.') from None
     except subprocess.CalledProcessError as error:
         if error.returncode == ISOLATION_UNAVAILABLE_EXIT:
             raise PDFIsolationUnavailable(
@@ -135,6 +142,26 @@ def extract_document(data, *, upload=False):
     finally:
         PARSER_SLOTS.release()
     return result.stdout.decode('utf-8')
+
+
+def restrict_macos_filesystem():
+    """Apply a deny-all Seatbelt profile after the worker has loaded its parser."""
+    if sys.platform != 'darwin':
+        return False
+    import ctypes as ct
+
+    sandbox = ct.CDLL('/usr/lib/libsandbox.1.dylib')
+    sandbox.sandbox_init.argtypes = [ct.c_char_p, ct.c_uint64, ct.POINTER(ct.c_char_p)]
+    sandbox.sandbox_init.restype = ct.c_int
+    sandbox.sandbox_free_error.argtypes = [ct.c_char_p]
+    sandbox.sandbox_free_error.restype = None
+    error = ct.c_char_p()
+    profile = b'(version 1)(deny default)'
+    try:
+        return sandbox.sandbox_init(profile, 0, ct.byref(error)) == 0
+    finally:
+        if error:
+            sandbox.sandbox_free_error(error)
 
 
 def extract(data, reader_type, byte_limit, text_limit):
@@ -161,10 +188,12 @@ if __name__ == "__main__":
     upload = sys.argv[1:] == ['upload']
     byte_limit = (10 if upload else 4) * 1024 * 1024
     data = sys.stdin.buffer.read(byte_limit + 1)
-    requires_isolation = os.environ.get('WEDNESDAY_REQUIRE_PDF_LANDLOCK') == '1'
+    requires_landlock = os.environ.get('WEDNESDAY_REQUIRE_PDF_LANDLOCK') == '1'
+    requires_isolation = requires_landlock or os.environ.get('WEDNESDAY_REQUIRE_PDF_ISOLATION') == '1'
     try:
-        isolated = restrict_linux_filesystem()
-    except OSError:
+        isolated = (restrict_macos_filesystem() if sys.platform == 'darwin' and requires_isolation
+                    and not requires_landlock else restrict_linux_filesystem())
+    except (OSError, AttributeError):
         if requires_isolation:
             sys.exit(ISOLATION_UNAVAILABLE_EXIT)
         raise
